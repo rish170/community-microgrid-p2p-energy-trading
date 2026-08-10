@@ -1,0 +1,20 @@
+# Raw and processed data -- never commit these, they're large and the raw
+# zip/CSVs are downloadable from the source instead
+/data-api/data/raw/
+/data-api/data/processed/
+*.parquet
+*.csv
+!/**/sample_*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env files
+.env
+.env.local
+
+# OS
+.DS_Store
