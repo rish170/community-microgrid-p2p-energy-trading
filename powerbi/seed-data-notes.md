@@ -14,3 +14,9 @@ needs to be replaced once the data-API teammate finalizes real zone logic.
 
 ## Connection
 Power BI Desktop connected via PostgreSQL connector, Session Pooler mode, Import (not DirectQuery).
+
+## Schema change log
+- forecasts.predicted_kwh split into predicted_consumption_kwh and
+  predicted_generation_kwh (2 targets, not 1) — see data-api teammate discussion.
+- Timestamps stored as naive values, labeled UTC in Postgres, no tz
+  conversion applied — matches original Ausgrid wall-clock time.
