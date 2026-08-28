@@ -23,7 +23,8 @@ create table forecasts (
   id bigserial primary key,
   household_id integer references households(household_id),
   ts timestamptz not null,
-  predicted_kwh numeric,
+  predicted_consumption_kwh numeric,
+  predicted_generation_kwh numeric,
   model_used text
 );
 
