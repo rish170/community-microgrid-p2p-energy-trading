@@ -4,5 +4,5 @@
 export type { EnergyToken } from './EnergyToken.js';
 export type { Trading } from './Trading.js';
 export * as factories from './factories/index.js';
-export { EnergyToken__factory } from './factories/EnergyToken__factory.js';
 export { Trading__factory } from './factories/Trading__factory.js';
+export { EnergyToken__factory } from './factories/EnergyToken__factory.js';
