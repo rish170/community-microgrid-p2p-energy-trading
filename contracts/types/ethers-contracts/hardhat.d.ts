@@ -10,17 +10,17 @@ import * as Contracts from "./index.js";
 
 declare module "@nomicfoundation/hardhat-ethers/types" {
   interface HardhatEthersHelpers extends HardhatEthersHelpersBase {
-  getContractFactory(name: 'EnergyToken', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.EnergyToken__factory>
-getContractFactory(name: 'Trading', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.Trading__factory>
+  getContractFactory(name: 'Trading', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.Trading__factory>
+getContractFactory(name: 'EnergyToken', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.EnergyToken__factory>
 
-  getContractAt(name: 'EnergyToken', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.EnergyToken>
-getContractAt(name: 'Trading', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.Trading>
+  getContractAt(name: 'Trading', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.Trading>
+getContractAt(name: 'EnergyToken', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.EnergyToken>
 
-  deployContract(name: 'EnergyToken', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.EnergyToken>
-deployContract(name: 'Trading', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.Trading>
+  deployContract(name: 'Trading', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.Trading>
+deployContract(name: 'EnergyToken', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.EnergyToken>
 
-  deployContract(name: 'EnergyToken', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.EnergyToken>
-deployContract(name: 'Trading', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.Trading>
+  deployContract(name: 'Trading', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.Trading>
+deployContract(name: 'EnergyToken', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.EnergyToken>
 
     // default types
     getContractFactory(
