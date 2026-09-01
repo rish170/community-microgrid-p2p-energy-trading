@@ -18,3 +18,21 @@ venv/
 
 # OS
 .DS_Store
+
+# Node.js dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Hardhat
+artifacts/
+cache/
+coverage/
+
+# Additional environment files
+.env.*.local
+
+# Logs
+*.log
