@@ -1,0 +1,18 @@
+{
+  "net_load_kwh": {
+    "target": "net_load_kwh",
+    "xgboost": {
+      "mae": 0.13833139836788177,
+      "rmse": 0.2612174770654156,
+      "best_iteration": 299
+    }
+  },
+  "gg_kwh": {
+    "target": "gg_kwh",
+    "xgboost": {
+      "mae": 0.012572607956826687,
+      "rmse": 0.04178786470319387,
+      "best_iteration": 244
+    }
+  }
+}
