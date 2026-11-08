@@ -1,15 +1,16 @@
 # Node dependencies
 node_modules/
+**/node_modules/
 
 # Hardhat generated files
-artifacts/
-cache/
+contracts/artifacts/
+contracts/cache/
 
-# Environment variables
+# Environment files
 .env
 .env.local
 
-# Build outputs
+# Next.js
 .next/
 dist/
 build/
@@ -18,9 +19,3 @@ build/
 __pycache__/
 venv/
 .venv/
-
-
-
-node_modules/
-contracts/artifacts/
-contracts/cache/
