@@ -1,0 +1,20 @@
+# Node dependencies
+node_modules/
+
+# Hardhat generated files
+artifacts/
+cache/
+
+# Environment variables
+.env
+.env.local
+
+# Build outputs
+.next/
+dist/
+build/
+
+# Python
+__pycache__/
+venv/
+.venv/
