@@ -1,0 +1,15 @@
+{
+  "name": "community-microgrid-p2p-energy-trading",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Blockchain-Enabled Peer-to-Peer Energy Trading and Load Balancing in Community Microgrids",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:all": "npm --prefix backend run dev & npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix frontend run start",
+    "lint": "npm --prefix frontend run lint"
+  }
+}

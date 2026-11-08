@@ -1,106 +1,152 @@
 @import "tailwindcss";
 
-:root {
-  --background: #090d16;
-  --foreground: #f1f5f9;
-  --card-bg: rgba(15, 23, 42, 0.8);
-  --card-border: rgba(56, 189, 248, 0.15);
-  --solar-glow: #10b981;
-  --energy-blue: #38bdf8;
+@theme {
+  /* Apple Minimal Design Tokens */
+  --color-apple-bg: #F5F5F7;
+  --color-apple-surface: #FFFFFF;
+  --color-apple-surface-secondary: #EBEBEF;
+  --color-apple-border: #D8D8DE;
+  --color-apple-text: #1D1D1F;
+  --color-apple-muted: #6E6E73;
+  --color-apple-graphite: #343438;
+  --color-apple-green: #3A7D5C;
+  --color-apple-green-success: #27845B;
+  --color-apple-amber: #D99A22;
+  --color-apple-blue: #5277D5;
+  --color-apple-red: #D94F58;
+  --color-apple-purple: #8271B8;
+
+  /* Theme color overrides for seamless utility compatibility */
+  --color-zinc-950: #FFFFFF;
+  --color-zinc-900: #F5F5F7;
+  --color-zinc-800: #EBEBEF;
+  --color-zinc-700: #D8D8DE;
+  --color-zinc-600: #6E6E73;
+  --color-zinc-500: #6E6E73;
+  --color-zinc-400: #6E6E73;
+  --color-zinc-300: #343438;
+  --color-zinc-200: #1D1D1F;
+  --color-zinc-100: #1D1D1F;
+  --color-zinc-50: #1D1D1F;
+
+  --color-slate-950: #FFFFFF;
+  --color-slate-900: #F5F5F7;
+  --color-slate-800: #EBEBEF;
+  --color-slate-700: #D8D8DE;
+  --color-slate-600: #6E6E73;
+  --color-slate-400: #6E6E73;
+  --color-slate-300: #343438;
+  --color-slate-100: #1D1D1F;
+
+  --color-sky-400: #5277D5;
+  --color-sky-500: #4165C0;
+
+  --color-amber-400: #D99A22;
+  --color-amber-300: #E6A72E;
+
+  --color-emerald-400: #27845B;
+  --color-emerald-500: #22734F;
+
+  --color-red-400: #D94F58;
+  --color-red-500: #C73E47;
+  --color-rose-400: #D94F58;
+  --color-rose-500: #C73E47;
+
+  --color-purple-400: #8271B8;
+  --color-indigo-400: #5277D5;
+  --color-violet-400: #8271B8;
 }
 
-.light {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card-bg: rgba(255, 255, 255, 0.9);
-  --card-border: rgba(14, 165, 233, 0.2);
-  --solar-glow: #059669;
-  --energy-blue: #0284c7;
+:root {
+  --background: #F5F5F7;
+  --surface: #FFFFFF;
+  --surface-secondary: #EBEBEF;
+  --border: #D8D8DE;
+  --foreground: #1D1D1F;
+  --foreground-muted: #6E6E73;
+  --brand-green: #3A7D5C;
+  --solar-amber: #D99A22;
+  --trading-blue: #5277D5;
+  --success-green: #27845B;
+  --deficit-red: #D94F58;
+  --blockchain-purple: #8271B8;
 }
 
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
   overflow-x: hidden;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  letter-spacing: -0.012em;
+  -webkit-font-smoothing: antialiased;
 }
 
-@keyframes energyFlowDown {
-  0% {
-    stroke-dashoffset: 60;
-  }
-  100% {
-    stroke-dashoffset: 0;
-  }
+/* Tabular Numbers for financial and energy telemetries */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
-@keyframes pulseGlow {
+/* Apple Minimal Glassmorphism & Surface Utilities */
+.apple-glass {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(216, 216, 222, 0.8);
+}
+
+.apple-glass-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(216, 216, 222, 0.85);
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.05);
+}
+
+.apple-card {
+  background-color: #FFFFFF;
+  border: 1px solid #D8D8DE;
+  border-radius: 1.25rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-card:hover {
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.07);
+}
+
+.apple-subcard {
+  background-color: #FBFBFC;
+  border: 1px solid #EBEBEF;
+  border-radius: 0.875rem;
+}
+
+/* Custom Minimal Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F5F5F7;
+}
+::-webkit-scrollbar-thumb {
+  background: #D8D8DE;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #6E6E73;
+}
+
+/* Pulse Animation */
+@keyframes applePulse {
   0%, 100% {
     opacity: 0.5;
-    transform: scale(0.98);
   }
   50% {
     opacity: 1;
-    transform: scale(1.02);
   }
 }
 
-@keyframes floatAnim {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+.animate-apple-pulse {
+  animation: applePulse 2.5s ease-in-out infinite;
 }
 
-.animate-energy-flow {
-  animation: energyFlowDown 1.2s linear infinite;
-}
-
-.animate-pulse-glow {
-  animation: pulseGlow 2.5s ease-in-out infinite;
-}
-
-.animate-float {
-  animation: floatAnim 4s ease-in-out infinite;
-}
-
-.glass-panel {
-  background: var(--card-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--card-border);
-}
-
-.glass-panel-glow {
-  background: var(--card-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  box-shadow: 0 0 25px -5px rgba(56, 189, 248, 0.15);
-}
-
-.solar-glow {
-  box-shadow: 0 0 35px -5px rgba(16, 185, 129, 0.3);
-}
-
-.outage-glow {
-  box-shadow: 0 0 35px -5px rgba(239, 68, 68, 0.3);
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(56, 189, 248, 0.25);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.5);
-}

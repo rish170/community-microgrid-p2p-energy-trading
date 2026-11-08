@@ -89,44 +89,46 @@ export default function TradeOrderBook() {
   };
 
   return (
-    <section id="orderbook" className="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-zinc-800/80">
+    <section id="orderbook" className="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-[#D8D8DE]">
       
-      {/* Header */}
-      <div className="text-center mb-14">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-4">
-          <ArrowDownUp className="w-3.5 h-3.5" /> Weeks 9 & 10 Core Engine
+      {/* Section Header */}
+      <div className="text-center mb-12">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold tracking-wide bg-[#8271B8]/10 text-[#8271B8] border border-[#8271B8]/20 mb-3.5">
+          <ArrowDownUp className="w-3.5 h-3.5" />
+          <span>Automated Matching Engine • Smart Escrow</span>
         </div>
-        <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white mb-4">
-          Live P2P Order Book & Trade Execution
+        <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-[#1D1D1F] mb-3">
+          Microgrid Order Book &amp; Execution
         </h2>
-        <p className="text-zinc-400 max-w-2xl mx-auto text-base sm:text-lg">
-          Place instant market or limit orders on the microgrid. Direct contract interaction with Ethers.js and automated Supabase database syncing.
+        <p className="text-[#6E6E73] max-w-2xl mx-auto text-sm sm:text-base leading-relaxed">
+          Submit limit and market orders directly to the localized microgrid order book. Verified against on-chain smart escrow in Trading.sol and synced with Supabase.
         </p>
       </div>
 
       {/* Grid: Order Placement + Live Book */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* Left Form: Create Order */}
-        <div className="lg:col-span-5 bg-zinc-950 rounded-3xl border border-zinc-800 p-6 sm:p-8 shadow-2xl">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-bold text-white flex items-center gap-2">
-              <Zap className="w-5 h-5 text-emerald-400" /> Create Energy Order
+        {/* Left Form: Create Order Ticket */}
+        <div className="lg:col-span-5 bg-white rounded-3xl border border-[#D8D8DE] p-6 sm:p-7 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-lg font-semibold text-[#1D1D1F] flex items-center gap-2">
+              <Zap className="w-4 h-4 text-[#5277D5]" />
+              <span>Create Order Ticket</span>
             </h3>
-            <span className="text-xs font-mono text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-500/30">
-              Contract: 0x9f...3B
+            <span className="text-[11px] font-mono text-[#6E6E73] bg-[#F5F5F7] px-2.5 py-1 rounded-lg border border-[#D8D8DE]">
+              Trading.sol: 0x9f...3B
             </span>
           </div>
 
-          {/* Buy/Sell Selector */}
-          <div className="grid grid-cols-2 gap-2 p-1.5 bg-zinc-900 rounded-2xl mb-6">
+          {/* Buy/Sell Selector Tabs - Apple Segmented Control */}
+          <div className="grid grid-cols-2 gap-1 p-1 bg-[#EBEBEF] rounded-xl mb-5">
             <button
               type="button"
               onClick={() => setActiveTab("buy")}
-              className={`py-2.5 text-sm font-bold rounded-xl transition cursor-pointer ${
+              className={`py-2 text-xs font-medium rounded-lg transition-all cursor-pointer ${
                 activeTab === "buy" 
-                  ? "bg-sky-500 text-black shadow-lg" 
-                  : "text-zinc-400 hover:text-white"
+                  ? "bg-white text-[#1D1D1F] shadow-xs font-semibold" 
+                  : "text-[#6E6E73] hover:text-[#1D1D1F]"
               }`}
             >
               Buy Energy (Demand)
@@ -134,10 +136,10 @@ export default function TradeOrderBook() {
             <button
               type="button"
               onClick={() => setActiveTab("sell")}
-              className={`py-2.5 text-sm font-bold rounded-xl transition cursor-pointer ${
+              className={`py-2 text-xs font-medium rounded-lg transition-all cursor-pointer ${
                 activeTab === "sell" 
-                  ? "bg-emerald-400 text-black shadow-lg" 
-                  : "text-zinc-400 hover:text-white"
+                  ? "bg-white text-[#1D1D1F] shadow-xs font-semibold" 
+                  : "text-[#6E6E73] hover:text-[#1D1D1F]"
               }`}
             >
               Sell Surplus (Solar)
@@ -146,8 +148,8 @@ export default function TradeOrderBook() {
 
           <form onSubmit={handlePlaceOrder} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                Energy Quantity (kWh)
+              <label className="block text-[11px] font-medium text-[#6E6E73] uppercase tracking-wider mb-1.5">
+                Energy Quantity (Units)
               </label>
               <div className="relative">
                 <input
@@ -155,17 +157,17 @@ export default function TradeOrderBook() {
                   step="any"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-emerald-400"
+                  className="w-full bg-[#F5F5F7] border border-[#D8D8DE] rounded-xl px-4 py-2.5 text-[#1D1D1F] font-mono text-sm focus:outline-none focus:border-[#1D1D1F] focus:bg-white transition"
                   placeholder="e.g. 15"
                   required
                 />
-                <span className="absolute right-4 top-3 text-xs font-mono text-zinc-400">kWh</span>
+                <span className="absolute right-4 top-2.5 text-xs font-mono text-[#6E6E73]">units</span>
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                Price per Unit (ETH / kWh)
+              <label className="block text-[11px] font-medium text-[#6E6E73] uppercase tracking-wider mb-1.5">
+                Price per Unit (ETH / unit)
               </label>
               <div className="relative">
                 <input
@@ -173,62 +175,58 @@ export default function TradeOrderBook() {
                   step="0.01"
                   value={customPrice}
                   onChange={(e) => setCustomPrice(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-emerald-400"
+                  className="w-full bg-[#F5F5F7] border border-[#D8D8DE] rounded-xl px-4 py-2.5 text-[#1D1D1F] font-mono text-sm focus:outline-none focus:border-[#1D1D1F] focus:bg-white transition"
                   placeholder="e.g. 1.2"
                   required
                 />
-                <span className="absolute right-4 top-3 text-xs font-mono text-zinc-400">ETH</span>
+                <span className="absolute right-4 top-2.5 text-xs font-mono text-[#6E6E73]">ETH</span>
               </div>
             </div>
 
-            {/* Total Estimated Cost */}
-            <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1.5 font-mono text-xs">
-              <div className="flex items-center justify-between text-zinc-400">
-                <span>Estimated Total:</span>
-                <span className="text-white font-bold text-sm">
+            {/* Total Estimated Cost Box */}
+            <div className="p-3.5 rounded-xl bg-[#F5F5F7] border border-[#E5E5EA] space-y-1.5 font-mono text-xs">
+              <div className="flex items-center justify-between text-[#6E6E73]">
+                <span>Estimated Value:</span>
+                <span className="text-[#1D1D1F] font-bold text-sm tabular-nums">
                   {(parseFloat(amount || "0") * parseFloat(customPrice || "0")).toFixed(2)} ETH
                 </span>
               </div>
-              <div className="flex items-center justify-between text-zinc-400 text-[11px]">
-                <span>Estimated Gas:</span>
-                <span className="text-emerald-400">~0.0024 ETH ($4.80)</span>
+              <div className="flex items-center justify-between text-[#6E6E73] text-[11px]">
+                <span>Estimated Sepolia Gas:</span>
+                <span className="text-[#27845B] tabular-nums font-semibold">~0.0024 ETH</span>
               </div>
-              <div className="flex items-center justify-between text-zinc-400 text-[11px]">
-                <span>Escrow Fee (0%):</span>
-                <span className="text-zinc-300">Community Zero Fee</span>
+              <div className="flex items-center justify-between text-[#6E6E73] text-[11px]">
+                <span>Microgrid Escrow Fee:</span>
+                <span className="text-[#5277D5] font-semibold">0% (P2P Zero Fee)</span>
               </div>
             </div>
 
             <button
               type="submit"
               disabled={isProcessing}
-              className={`w-full py-4 rounded-2xl text-sm font-extrabold text-black transition-all transform hover:-translate-y-0.5 cursor-pointer ${
-                activeTab === "buy"
-                  ? "bg-gradient-to-r from-sky-400 to-blue-400 hover:from-sky-300 hover:to-blue-300 shadow-[0_0_20px_rgba(56,189,248,0.4)]"
-                  : "bg-gradient-to-r from-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
-              }`}
+              className="w-full py-3.5 rounded-xl text-xs font-semibold text-white bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] transition-all cursor-pointer shadow-sm disabled:opacity-50"
             >
-              {isProcessing ? "Processing On-Chain..." : `Submit ${activeTab === "buy" ? "Buy" : "Sell"} Order`}
+              {isProcessing ? "Broadcasting to Sepolia..." : `Submit ${activeTab === "buy" ? "Buy" : "Sell"} Order`}
             </button>
           </form>
 
-          {/* Active Status Modal / Notification */}
+          {/* Active Status Progress */}
           {isProcessing && (
-            <div className="mt-4 p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2 animate-pulse">
-              <div className="flex items-center justify-between text-xs font-bold text-emerald-400">
+            <div className="mt-4 p-3.5 rounded-xl bg-[#F5F5F7] border border-[#D8D8DE] space-y-1.5 animate-pulse">
+              <div className="flex items-center justify-between text-xs font-semibold text-[#1D1D1F]">
                 <span>Transaction in Progress</span>
-                <span>Step {txStep + 1} of {steps.length}</span>
+                <span className="font-mono text-[#6E6E73]">Step {txStep + 1} of {steps.length}</span>
               </div>
-              <p className="text-xs text-zinc-300 font-mono">{steps[txStep]}</p>
+              <p className="text-xs text-[#6E6E73] font-mono">{steps[txStep]}</p>
             </div>
           )}
 
           {txSuccess && (
-            <div className="mt-4 p-4 rounded-xl bg-emerald-950/60 border border-emerald-500/50 flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="text-xs space-y-1">
-                <div className="font-bold text-white">Order Confirmed on Sepolia!</div>
-                <div className="text-zinc-400 font-mono">Tx: 0x4f19e...8c20 • Mirrored to Supabase</div>
+            <div className="mt-4 p-3.5 rounded-xl bg-[#27845B]/10 border border-[#27845B]/20 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-[#27845B] shrink-0 mt-0.5" />
+              <div className="text-xs space-y-0.5">
+                <div className="font-semibold text-[#1D1D1F]">Order Confirmed on Sepolia</div>
+                <div className="text-[#6E6E73] font-mono text-[11px]">Tx confirmed • Mirrored to Supabase</div>
               </div>
             </div>
           )}
@@ -236,55 +234,55 @@ export default function TradeOrderBook() {
         </div>
 
         {/* Right Panel: Live Depth Order Book */}
-        <div className="lg:col-span-7 bg-zinc-950 rounded-3xl border border-zinc-800 p-6 sm:p-8 shadow-2xl flex flex-col justify-between">
+        <div className="lg:col-span-7 bg-white rounded-3xl border border-[#D8D8DE] p-6 sm:p-7 shadow-[0_4px_24px_rgba(0,0,0,0.03)] flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
               <div>
-                <h3 className="text-xl font-bold text-white">Live Microgrid Market Depth</h3>
-                <span className="text-xs text-zinc-400">Real-time local neighborhood bids and asks</span>
+                <h3 className="text-lg font-semibold text-[#1D1D1F]">Live Microgrid Market Depth</h3>
+                <span className="text-xs text-[#6E6E73]">Real-time local neighborhood bids and asks</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span className="text-xs font-mono text-emerald-400 font-semibold">MATCHING ACTIVE</span>
+                <span className="w-2 h-2 rounded-full bg-[#27845B] animate-pulse" />
+                <span className="text-xs font-mono text-[#27845B] font-semibold">MATCHING ACTIVE</span>
               </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="uppercase text-zinc-400 bg-zinc-900/60 border-b border-zinc-800 font-mono">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="uppercase text-[#6E6E73] bg-[#F5F5F7] border-b border-[#E5E5EA] text-[11px] tracking-wider">
                   <tr>
-                    <th className="py-2.5 px-3 rounded-l-lg">Side</th>
-                    <th className="py-2.5 px-3">Node</th>
-                    <th className="py-2.5 px-3">Energy</th>
-                    <th className="py-2.5 px-3">Rate</th>
-                    <th className="py-2.5 px-3">Total ETH</th>
-                    <th className="py-2.5 px-3">Distance</th>
-                    <th className="py-2.5 px-3 rounded-r-lg">Action</th>
+                    <th className="py-2.5 px-3 rounded-l-lg font-semibold">Side</th>
+                    <th className="py-2.5 px-3 font-semibold">Node</th>
+                    <th className="py-2.5 px-3 text-right font-semibold">Energy</th>
+                    <th className="py-2.5 px-3 text-right font-semibold">Rate</th>
+                    <th className="py-2.5 px-3 text-right font-semibold">Total ETH</th>
+                    <th className="py-2.5 px-3 text-right font-semibold">Dist</th>
+                    <th className="py-2.5 px-3 rounded-r-lg text-center font-semibold">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/60 font-mono">
+                <tbody className="divide-y divide-[#EBEBEF]">
                   {orders.map((o) => (
-                    <tr key={o.id} className="hover:bg-zinc-900/40 transition">
+                    <tr key={o.id} className="hover:bg-[#F5F5F7]/80 transition">
                       <td className="py-3 px-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          o.type === "sell" ? "bg-emerald-500/20 text-emerald-400" : "bg-sky-500/20 text-sky-400"
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                          o.type === "sell" ? "bg-[#27845B]/10 text-[#27845B] border border-[#27845B]/20" : "bg-[#5277D5]/10 text-[#5277D5] border border-[#5277D5]/20"
                         }`}>
                           {o.type}
                         </span>
                       </td>
-                      <td className="py-3 px-3 text-white font-medium">{o.seller}</td>
-                      <td className="py-3 px-3 text-zinc-300 font-bold">{o.amountKwh} kWh</td>
-                      <td className="py-3 px-3 text-emerald-400 font-bold">{o.pricePerKwh} ETH</td>
-                      <td className="py-3 px-3 text-white font-bold">{o.totalEth} ETH</td>
-                      <td className="py-3 px-3 text-zinc-400">{o.distance}</td>
-                      <td className="py-3 px-3">
+                      <td className="py-3 px-3 text-[#1D1D1F] font-sans font-medium text-xs">{o.seller}</td>
+                      <td className="py-3 px-3 text-[#1D1D1F] font-semibold text-right tabular-nums">{o.amountKwh} units</td>
+                      <td className="py-3 px-3 text-[#5277D5] font-semibold text-right tabular-nums">{o.pricePerKwh.toFixed(2)}</td>
+                      <td className="py-3 px-3 text-[#1D1D1F] font-semibold text-right tabular-nums">{o.totalEth.toFixed(2)}</td>
+                      <td className="py-3 px-3 text-[#6E6E73] text-right">{o.distance}</td>
+                      <td className="py-3 px-3 text-center">
                         <button
                           onClick={() => {
                             setAmount(o.amountKwh.toString());
                             setCustomPrice(o.pricePerKwh.toString());
                             setActiveTab(o.type === "sell" ? "buy" : "sell");
                           }}
-                          className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-sans font-bold transition cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg bg-[#F5F5F7] hover:bg-[#EBEBEF] text-[#1D1D1F] text-[11px] font-sans font-medium border border-[#D8D8DE] transition cursor-pointer shadow-xs"
                         >
                           Match
                         </button>
@@ -296,12 +294,12 @@ export default function TradeOrderBook() {
             </div>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Escrow contracts audit-ready & verified</span>
+          <div className="mt-5 pt-3.5 border-t border-[#EBEBEF] flex items-center justify-between text-xs text-[#6E6E73] flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-[#27845B]" />
+              <span>Smart contracts verified on Sepolia</span>
             </div>
-            <div className="font-mono text-emerald-400">Auto-Matching Latency: 42ms</div>
+            <div className="font-mono text-[#5277D5]">Matching Latency: 42ms</div>
           </div>
         </div>
 

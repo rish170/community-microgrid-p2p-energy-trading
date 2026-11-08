@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Microgrid P2P Energy Trading | Decentralized Clean Power",
-  description: "Peer-to-peer solar energy trading protocol on Ethereum with real-time microgrid matching and smart escrow.",
+  title: "EnergyOS — Community Microgrid P2P Energy Trading",
+  description: "Blockchain-enabled peer-to-peer solar energy trading and load balancing platform with ML demand forecasting.",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#090d16] text-slate-100">{children}</body>
+      <body className="min-h-full flex flex-col bg-[#F5F5F7] text-[#1D1D1F]">{children}</body>
     </html>
   );
 }

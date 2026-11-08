@@ -161,7 +161,7 @@ export default function P2PTradingSimulator() {
   const steps = [
     { title: "Authorizing Buyer (Teammate) Wallet", desc: `Signing on-chain transfer of ${totalEthCost} SepoliaETH to Seller (${prosumerAddress.slice(0, 8)}...)` },
     { title: "Broadcasting to Sepolia Mempool", desc: "Transaction submitted to Ethereum Sepolia testnet nodes" },
-    { title: "Smart Contract Escrow Match", desc: `${transferUnits} kWh Energy Tokens transferred to Buyer` },
+    { title: "Smart Contract Escrow Match", desc: `${transferUnits} units Energy Tokens transferred to Buyer` },
     { title: "Backend API Sync", desc: "Express backend verifying receipt on-chain & mirroring to Supabase DB" },
     { title: "Outage Mitigated", desc: "Local microgrid relay closed, powering Buyer Node" }
   ];
@@ -294,161 +294,140 @@ export default function P2PTradingSimulator() {
   return (
     <section id="demo" className="py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       
-      {/* Header */}
+      {/* Section Header */}
       <div className="text-center mb-12">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-4">
-          <Sparkles className="w-3.5 h-3.5" /> Direct Dual-Wallet P2P Trade
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold tracking-wide bg-[#3A7D5C]/10 text-[#3A7D5C] border border-[#3A7D5C]/20 mb-3.5">
+          <Sparkles className="w-3.5 h-3.5 text-[#3A7D5C]" />
+          <span>Bilateral P2P Settlement Engine</span>
         </div>
-        <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white mb-4">
-          Seller (You) <span className="text-emerald-400">↔</span> Buyer (Teammate)
+        <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-[#1D1D1F] mb-3">
+          Direct Peer-to-Peer Energy Simulator
         </h2>
-        <p className="text-zinc-400 max-w-2xl mx-auto text-base sm:text-lg">
-          Sell energy from your connected MetaMask wallet. The total ETH is automatically transferred from your teammate&apos;s wallet to yours on Sepolia.
+        <p className="text-[#6E6E73] max-w-2xl mx-auto text-sm sm:text-base leading-relaxed">
+          Execute bilateral energy settlements directly between connected prosumer and consumer wallets on Ethereum Sepolia testnet with zero intermediary fees.
         </p>
       </div>
 
-      {/* Main Diagram Area */}
-      <div className="relative bg-zinc-950/80 rounded-3xl border border-zinc-800/80 p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
+      {/* Main Interactive Stage */}
+      <div className="relative bg-white rounded-3xl border border-[#D8D8DE] p-6 sm:p-10 shadow-[0_4px_24px_rgba(0,0,0,0.03)]">
         
-        <div className="relative z-10 flex flex-col items-center justify-between max-w-4xl mx-auto space-y-8">
+        <div className="relative z-10 flex flex-col items-center justify-between max-w-4xl mx-auto space-y-6">
           
           {/* ================= TOP: SELLER (YOU / PROSUMER - RECEIVES ETH) ================= */}
-          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-2xl bg-zinc-900/90 border border-emerald-500/40 hover:border-emerald-500/70 transition-all shadow-[0_0_25px_rgba(16,185,129,0.15)]">
+          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-2xl bg-[#FBFBFC] border border-[#D8D8DE] hover:border-[#B0B0B8] transition-colors">
             
             {/* Prosumer Info Box */}
-            <div className="flex-1 w-full space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="flex-1 w-full space-y-3.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-emerald-500 text-black uppercase">
-                    SELLER (YOU)
+                  <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-[#27845B]/10 text-[#27845B] border border-[#27845B]/20 uppercase tracking-wider">
+                    Seller (Prosumer)
                   </span>
-                  <span className="text-sm font-semibold text-emerald-400">Solar Prosumer Node</span>
+                  <span className="text-sm font-semibold text-[#1D1D1F]">Solar Prosumer Node Alpha</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-mono bg-black/50 px-2.5 py-1 rounded-lg border border-zinc-800">
-                  <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+                <div className="flex items-center gap-1.5 text-xs text-[#1D1D1F] font-mono bg-white px-3 py-1 rounded-lg border border-[#D8D8DE] shadow-xs">
+                  <Wallet className="w-3.5 h-3.5 text-[#27845B]" />
                   <span>{prosumerEthBalance} SepoliaETH</span>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase text-zinc-400 tracking-wider">
-                    Your MetaMask Wallet Address (Receives Funds)
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <label className="text-[11px] font-medium uppercase text-[#6E6E73] tracking-wider">
+                    Seller Wallet Address (Receives SepoliaETH)
                   </label>
                   <button
                     onClick={connectSellerMetaMask}
-                    className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline cursor-pointer flex items-center gap-1"
+                    className="text-[11px] font-medium text-[#3A7D5C] hover:text-[#27845B] transition cursor-pointer flex items-center gap-1"
                   >
                     <UserCheck className="w-3 h-3" />
-                    {sellerConnected ? "MetaMask Connected ✓" : "Connect My MetaMask"}
+                    {sellerConnected ? "MetaMask Connected ✓" : "Connect MetaMask"}
                   </button>
                 </div>
                 <input
                   type="text"
                   value={prosumerAddress}
                   onChange={(e) => setProsumerAddress(e.target.value)}
-                  className="w-full text-xs font-mono text-emerald-400 bg-black/60 px-3 py-2 rounded-lg border border-zinc-800 focus:outline-none focus:border-emerald-500"
+                  className="w-full text-xs font-mono text-[#1D1D1F] bg-white px-3.5 py-2.5 rounded-xl border border-[#D8D8DE] focus:outline-none focus:border-[#3A7D5C] shadow-xs transition"
                   placeholder="0x..."
                 />
               </div>
 
               {/* Energy Stats Grid */}
-              <div className="grid grid-cols-3 gap-2.5 pt-2">
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 text-center">
-                  <span className="text-[11px] text-zinc-400 uppercase tracking-wider block">Total Gen</span>
-                  <span className="text-base font-extrabold text-white">{prosumerTotal} <span className="text-xs text-zinc-500 font-normal">kWh</span></span>
+              <div className="grid grid-cols-3 gap-2.5 pt-1">
+                <div className="p-3 rounded-xl bg-white border border-[#D8D8DE] text-center shadow-xs">
+                  <span className="text-[10px] text-[#6E6E73] uppercase tracking-wider block font-medium">Solar Gen</span>
+                  <span className="text-base font-semibold text-[#D99A22]">{prosumerTotal} <span className="text-xs text-[#6E6E73] font-normal">units</span></span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 text-center">
-                  <span className="text-[11px] text-zinc-400 uppercase tracking-wider block">Your Load</span>
-                  <span className="text-base font-extrabold text-zinc-300">{prosumerRequired} <span className="text-xs text-zinc-500 font-normal">kWh</span></span>
+                <div className="p-3 rounded-xl bg-white border border-[#D8D8DE] text-center shadow-xs">
+                  <span className="text-[10px] text-[#6E6E73] uppercase tracking-wider block font-medium">Self Load</span>
+                  <span className="text-base font-semibold text-[#1D1D1F]">{prosumerRequired} <span className="text-xs text-[#6E6E73] font-normal">units</span></span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-center shadow-[0_0_15px_rgba(16,185,129,0.15)]">
-                  <span className="text-[11px] text-emerald-400 font-semibold uppercase tracking-wider block">Surplus to Sell</span>
-                  <span className="text-base font-black text-emerald-400">{prosumerSurplus} <span className="text-xs text-emerald-500/80 font-normal">kWh</span></span>
+                <div className="p-3 rounded-xl bg-[#27845B]/10 border border-[#27845B]/20 text-center shadow-xs">
+                  <span className="text-[10px] text-[#27845B] font-medium uppercase tracking-wider block">Net Surplus</span>
+                  <span className="text-base font-bold text-[#27845B]">+{prosumerSurplus} <span className="text-xs text-[#27845B]/80 font-normal">units</span></span>
                 </div>
               </div>
             </div>
 
-            {/* Prosumer Building Architectural SVG (Matching Photo 1) */}
-            <div className="relative flex flex-col items-center justify-center p-3 bg-zinc-950/80 rounded-2xl border border-emerald-500/30 w-44 h-44 shrink-0 shadow-inner">
-              <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span className="text-[9px] text-emerald-400 font-mono font-bold">SOLAR ACTIVE</span>
+            {/* Prosumer Building Architectural SVG */}
+            <div className="relative flex flex-col items-center justify-center p-3 bg-[#F5F5F7] rounded-2xl border border-[#D8D8DE] w-44 h-44 shrink-0 shadow-inner">
+              <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#D99A22] animate-pulse" />
+                <span className="text-[9px] text-[#D99A22] font-mono font-semibold">SOLAR ACTIVE</span>
               </div>
               
               <svg className="w-32 h-32 overflow-visible" viewBox="0 0 160 160" fill="none">
                 <defs>
-                  {/* Solar Panel Gradient */}
                   <linearGradient id="solarGlass" x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0%" stopColor="#1e3a8a" />
                     <stop offset="50%" stopColor="#2563eb" />
                     <stop offset="100%" stopColor="#0284c7" />
                   </linearGradient>
-                  {/* Roof Shadow */}
                   <linearGradient id="roofGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#334155" />
-                    <stop offset="100%" stopColor="#1e293b" />
+                    <stop offset="0%" stopColor="#475569" />
+                    <stop offset="100%" stopColor="#334155" />
                   </linearGradient>
-                  {/* Window Glow */}
                   <linearGradient id="warmLight" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#fef08a" />
                     <stop offset="100%" stopColor="#f59e0b" />
                   </linearGradient>
                 </defs>
 
-                {/* Sky/Atmosphere Glow */}
-                <circle cx="80" cy="80" r="70" fill="rgba(16,185,129,0.06)" />
+                <circle cx="80" cy="80" r="70" fill="rgba(39,132,91,0.06)" />
+                <rect x="62" y="24" width="10" height="18" fill="#ffffff" stroke="#94a3b8" strokeWidth="1" />
+                <rect x="60" y="22" width="14" height="3" fill="#64748b" />
+                <polygon points="40,65 125,48 142,120 40,132" fill="#ffffff" stroke="#cbd5e1" strokeWidth="1.2" />
+                <polygon points="26,62 58,58 58,135 26,135" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="1" />
+                <polygon points="20,62 82,28 148,46 75,76" fill="url(#roofGrad)" stroke="#334155" strokeWidth="1.5" />
+                <polygon points="82,28 148,46 138,118 78,110" fill="#334155" opacity="0.9" />
 
-                {/* Chimney */}
-                <rect x="62" y="24" width="10" height="18" fill="#f8fafc" stroke="#94a3b8" strokeWidth="1" />
-                <rect x="60" y="22" width="14" height="3" fill="#334155" />
-
-                {/* Main House Cream Stucco Walls */}
-                <polygon points="40,65 125,48 142,120 40,132" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1.2" />
-                
-                {/* Modern Dark Grey Cube Bump-out (as in reference Photo 1) */}
-                <polygon points="26,62 58,58 58,135 26,135" fill="#475569" stroke="#334155" strokeWidth="1" />
-
-                {/* Pitched Roof (Charcoal Tiles) */}
-                <polygon points="20,62 82,28 148,46 75,76" fill="url(#roofGrad)" stroke="#0f172a" strokeWidth="1.5" />
-                <polygon points="82,28 148,46 138,118 78,110" fill="#1e293b" opacity="0.9" />
-
-                {/* ================= ROOFTOP SOLAR PV ARRAY (Photo 1) ================= */}
+                {/* Rooftop Solar PV */}
                 <polygon points="34,58 78,34 135,48 88,70" fill="url(#solarGlass)" stroke="#38bdf8" strokeWidth="1.2" />
-                
-                {/* Solar Grid Wires & Photovoltaic Cells */}
                 <line x1="48" y1="52" x2="102" y2="64" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
                 <line x1="62" y1="44" x2="118" y2="56" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
                 <line x1="60" y1="40" x2="48" y2="64" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
                 <line x1="82" y1="36" x2="70" y2="66" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
                 <line x1="104" y1="42" x2="92" y2="68" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
                 <line x1="122" y1="46" x2="110" y2="62" stroke="rgba(255,255,255,0.7)" strokeWidth="0.8" />
-
-                {/* Solar Glint Highlight */}
                 <polygon points="38,56 60,44 75,54 50,65" fill="rgba(255,255,255,0.25)" />
 
-                {/* Large Architectural Windows with Warm Golden Glow */}
-                {/* Cube Windows */}
-                <rect x="31" y="70" width="10" height="22" rx="1" fill="url(#warmLight)" stroke="#1e293b" strokeWidth="1.2" />
-                <rect x="43" y="70" width="10" height="22" rx="1" fill="url(#warmLight)" stroke="#1e293b" strokeWidth="1.2" />
-                
-                {/* Lower Cube Window */}
-                <rect x="31" y="104" width="10" height="24" rx="1" fill="url(#warmLight)" stroke="#1e293b" strokeWidth="1.2" />
-                <rect x="43" y="104" width="10" height="24" rx="1" fill="url(#warmLight)" stroke="#1e293b" strokeWidth="1.2" />
-
-                {/* Facade Picture Windows */}
-                <rect x="68" y="72" width="28" height="16" rx="1" fill="url(#warmLight)" stroke="#334155" strokeWidth="1.2" />
-                <rect x="68" y="98" width="28" height="22" rx="1" fill="url(#warmLight)" stroke="#334155" strokeWidth="1.2" />
-                <line x1="82" y1="72" x2="82" y2="88" stroke="#334155" strokeWidth="1" />
-                <line x1="82" y1="98" x2="82" y2="120" stroke="#334155" strokeWidth="1" />
-
-                {/* Balcony with Glass Railing (Right side) */}
-                <rect x="110" y="70" width="24" height="24" rx="1" fill="url(#warmLight)" stroke="#334155" strokeWidth="1" />
-                <rect x="108" y="84" width="28" height="10" fill="rgba(56,189,248,0.25)" stroke="#38bdf8" strokeWidth="0.8" />
+                {/* Architectural Windows */}
+                <rect x="31" y="70" width="10" height="22" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <rect x="43" y="70" width="10" height="22" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <rect x="31" y="104" width="10" height="24" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <rect x="43" y="104" width="10" height="24" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <rect x="68" y="72" width="28" height="16" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <rect x="68" y="98" width="28" height="22" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1.2" />
+                <line x1="82" y1="72" x2="82" y2="88" stroke="#cbd5e1" strokeWidth="1" />
+                <line x1="82" y1="98" x2="82" y2="120" stroke="#cbd5e1" strokeWidth="1" />
+                <rect x="110" y="70" width="24" height="24" rx="1" fill="url(#warmLight)" stroke="#cbd5e1" strokeWidth="1" />
+                <rect x="108" y="84" width="28" height="10" fill="rgba(56,189,248,0.2)" stroke="#38bdf8" strokeWidth="0.8" />
               </svg>
               
-              <div className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-emerald-400 font-mono">
-                <Sun className="w-3.5 h-3.5 text-amber-400" /> Solar Rooftop Villa
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-[#1D1D1F] font-mono">
+                <Sun className="w-3.5 h-3.5 text-[#D99A22]" />
+                <span>Rooftop PV (5.0 kWp)</span>
               </div>
             </div>
 
@@ -456,44 +435,36 @@ export default function P2PTradingSimulator() {
 
 
           {/* ================= MIDDLE: FLOW & UNIT COUNTER CONTROLS ================= */}
-          <div className="w-full flex flex-col items-center justify-center my-0 relative space-y-3">
+          <div className="w-full flex flex-col items-center justify-center relative space-y-2">
             
-            {/* Top Flow Line */}
-            <div className="h-10 w-1 flex flex-col items-center justify-center relative">
-              <svg className="w-6 h-10 overflow-visible" viewBox="0 0 24 40">
-                <line 
-                  x1="12" y1="0" x2="12" y2="40" 
-                  stroke={status === "executing" ? "#10b981" : "#38bdf8"} 
-                  strokeWidth="3.5" 
-                  strokeDasharray="6,6" 
-                  className={status === "executing" ? "animate-energy-flow" : ""}
-                />
-              </svg>
-            </div>
+            {/* Top Connector */}
+            <div className="h-6 w-px bg-[#D8D8DE]" />
 
-            {/* Smart Meter / Trade Configuration Card */}
-            <div className="z-20 w-full max-w-xl p-5 rounded-2xl bg-zinc-900/95 border border-sky-500/40 shadow-2xl backdrop-blur-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            {/* Trade Configuration Card */}
+            <div className="z-20 w-full max-w-xl p-5 rounded-2xl bg-white border border-[#D8D8DE] shadow-[0_4px_16px_rgba(0,0,0,0.04)] flex flex-col sm:flex-row items-center justify-between gap-5">
               
               {/* Unit Incrementer / Decrementer */}
-              <div className="space-y-1 text-center sm:text-left">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400 block">
-                  Energy to Sell (kWh)
+              <div className="space-y-1.5 text-center sm:text-left">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#6E6E73] block">
+                  Energy Transfer Volume
                 </span>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={handleDecrement}
                     disabled={status === "executing" || transferUnits <= 1}
-                    className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white flex items-center justify-center border border-zinc-700 transition cursor-pointer"
+                    className="w-9 h-9 rounded-xl bg-[#F5F5F7] hover:bg-[#EBEBEF] disabled:opacity-30 text-[#1D1D1F] flex items-center justify-center border border-[#D8D8DE] transition cursor-pointer"
+                    aria-label="Decrease units"
                   >
                     <Minus className="w-4 h-4" />
                   </button>
-                  <span className="text-2xl font-black text-white font-mono min-w-[60px] text-center">
-                    {transferUnits} <span className="text-xs text-zinc-400 font-normal">kWh</span>
+                  <span className="text-2xl font-bold text-[#1D1D1F] font-mono min-w-[70px] text-center">
+                    {transferUnits} <span className="text-xs text-[#6E6E73] font-normal">units</span>
                   </span>
                   <button
                     onClick={handleIncrement}
                     disabled={status === "executing" || transferUnits >= prosumerSurplus}
-                    className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white flex items-center justify-center border border-zinc-700 transition cursor-pointer"
+                    className="w-9 h-9 rounded-xl bg-[#F5F5F7] hover:bg-[#EBEBEF] disabled:opacity-30 text-[#1D1D1F] flex items-center justify-center border border-[#D8D8DE] transition cursor-pointer"
+                    aria-label="Increase units"
                   >
                     <Plus className="w-4 h-4" />
                   </button>
@@ -501,65 +472,51 @@ export default function P2PTradingSimulator() {
               </div>
 
               {/* Rate & Total ETH calculation */}
-              <div className="p-3 rounded-xl bg-black/60 border border-zinc-800 text-right space-y-0.5 min-w-[170px]">
-                <div className="text-[10px] text-zinc-400 uppercase font-mono">Fixed Tariff: <strong className="text-emerald-400">0.2 ETH / unit</strong></div>
-                <div className="text-xs text-zinc-300">Teammate Pays You:</div>
-                <div className="text-lg font-black text-sky-400 font-mono">
-                  {totalEthCost} <span className="text-xs text-zinc-400">SepoliaETH</span>
+              <div className="p-3.5 rounded-xl bg-[#F5F5F7] border border-[#E5E5EA] text-right space-y-1 min-w-[190px]">
+                <div className="text-[10px] text-[#6E6E73] uppercase font-mono tracking-wider">
+                  Tariff: <strong className="text-[#27845B]">0.2 ETH / unit</strong>
+                </div>
+                <div className="text-xs text-[#6E6E73]">Consumer Pays Prosumer:</div>
+                <div className="text-lg font-bold text-[#5277D5] font-mono">
+                  {totalEthCost} <span className="text-xs text-[#6E6E73]">SepoliaETH</span>
                 </div>
               </div>
 
             </div>
 
-            {/* Bottom Flow Line */}
-            <div className="h-10 w-1 flex flex-col items-center justify-center relative">
-              <svg className="w-6 h-10 overflow-visible" viewBox="0 0 24 40">
-                <line 
-                  x1="12" y1="0" x2="12" y2="40" 
-                  stroke={status === "executing" ? "#10b981" : "#38bdf8"} 
-                  strokeWidth="3.5" 
-                  strokeDasharray="6,6" 
-                  className={status === "executing" ? "animate-energy-flow" : ""}
-                />
-              </svg>
-            </div>
+            {/* Bottom Connector */}
+            <div className="h-6 w-px bg-[#D8D8DE]" />
 
           </div>
 
 
           {/* ================= BOTTOM: BUYER (TEAMMATE / CONSUMER - PAYS ETH) ================= */}
-          <div className={`w-full flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-2xl bg-zinc-900/90 border transition-all ${
-            isOutage 
-              ? "border-red-500/40 hover:border-red-500/70 outage-glow" 
-              : "border-sky-500/40 hover:border-sky-500/70 shadow-[0_0_35px_rgba(56,189,248,0.25)]"
-          }`}>
+          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-2xl bg-[#FBFBFC] border border-[#D8D8DE] hover:border-[#B0B0B8] transition-colors">
             
             {/* Consumer Info Box */}
-            <div className="flex-1 w-full space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="flex-1 w-full space-y-3.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className={`px-2.5 py-0.5 rounded-md text-xs font-bold uppercase ${
-                    isOutage ? "bg-red-500 text-white" : "bg-sky-400 text-black"
-                  }`}>
-                    BUYER (TEAMMATE)
+                  <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wider bg-[#5277D5]/10 text-[#5277D5] border border-[#5277D5]/20">
+                    Buyer (Consumer)
                   </span>
-                  <span className="text-sm font-semibold text-zinc-300">Consumer Node</span>
+                  <span className="text-sm font-semibold text-[#1D1D1F]">Consumer Node Beta</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-mono bg-black/50 px-2.5 py-1 rounded-lg border border-zinc-800">
-                  <Wallet className="w-3.5 h-3.5 text-sky-400" />
+                <div className="flex items-center gap-1.5 text-xs text-[#1D1D1F] font-mono bg-white px-3 py-1 rounded-lg border border-[#D8D8DE] shadow-xs">
+                  <Wallet className="w-3.5 h-3.5 text-[#5277D5]" />
                   <span>{consumerEthBalance} SepoliaETH</span>
                 </div>
               </div>
 
-              {/* Teammate Address & Connect Buyer MetaMask Button */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase text-zinc-400 tracking-wider">
-                    Teammate&apos;s Buyer Wallet Address (Pays ETH)
+              {/* Teammate Address & Connect Buyer MetaMask */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <label className="text-[11px] font-medium uppercase text-[#6E6E73] tracking-wider">
+                    Buyer Wallet Address (Sends SepoliaETH)
                   </label>
                   <button
                     onClick={connectBuyerMetaMask}
-                    className="text-[10px] font-bold text-sky-400 hover:text-sky-300 underline cursor-pointer flex items-center gap-1"
+                    className="text-[11px] font-medium text-[#5277D5] hover:text-[#5277D5]/80 transition cursor-pointer flex items-center gap-1"
                   >
                     <UserCheck className="w-3 h-3" />
                     {buyerConnected ? "Buyer Connected ✓" : "Connect Buyer MetaMask"}
@@ -569,22 +526,22 @@ export default function P2PTradingSimulator() {
                   type="text"
                   value={consumerAddress}
                   onChange={(e) => setConsumerAddress(e.target.value)}
-                  className="w-full text-xs font-mono text-sky-400 bg-black/60 px-3 py-2 rounded-lg border border-zinc-800 focus:outline-none focus:border-sky-500"
+                  className="w-full text-xs font-mono text-[#1D1D1F] bg-white px-3.5 py-2.5 rounded-xl border border-[#D8D8DE] focus:outline-none focus:border-[#5277D5] shadow-xs transition"
                   placeholder="0x..."
                 />
               </div>
 
               {/* Teammate Private Key (for automatic backend signing) */}
-              <div className="space-y-1 pt-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase text-amber-400 tracking-wider flex items-center gap-1">
+              <div className="space-y-1.5 pt-0.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <label className="text-[11px] font-medium uppercase text-[#8271B8] tracking-wider flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5" />
-                    Teammate&apos;s Private Key / Signer Key (for automatic payment)
+                    <span>Buyer Signer Private Key (Automated Transfer)</span>
                   </label>
                   <button
                     type="button"
                     onClick={() => setShowKey(!showKey)}
-                    className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] text-[#6E6E73] hover:text-[#1D1D1F] flex items-center gap-1 cursor-pointer transition"
                   >
                     {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     <span>{showKey ? "Hide" : "Show"}</span>
@@ -594,143 +551,96 @@ export default function P2PTradingSimulator() {
                   type={showKey ? "text" : "password"}
                   value={buyerPrivateKey}
                   onChange={(e) => setBuyerPrivateKey(e.target.value)}
-                  className="w-full text-xs font-mono text-amber-300 bg-black/60 px-3 py-2 rounded-lg border border-amber-500/30 focus:outline-none focus:border-amber-400 placeholder:text-zinc-600"
-                  placeholder="Enter teammate's private key to auto-transfer ETH from their wallet..."
+                  className="w-full text-xs font-mono text-[#8271B8] bg-white px-3.5 py-2.5 rounded-xl border border-[#D8D8DE] focus:outline-none focus:border-[#8271B8] placeholder:text-[#94A3B8] shadow-xs transition"
+                  placeholder="Paste Sepolia private key for instant backend execution..."
                 />
-                <span className="text-[10px] text-zinc-400 block font-mono">
-                  Used by Express backend to sign and send {totalEthCost} SepoliaETH to your wallet.
+                <span className="text-[10px] text-[#6E6E73] block font-mono">
+                  Used by Express backend (/api/trade/execute-auto) to sign and dispatch {totalEthCost} SepoliaETH.
                 </span>
               </div>
 
-              {/* Status Flashcard */}
+              {/* Status Banner */}
               <div className={`p-3 rounded-xl border flex items-center justify-between transition-colors ${
                 isOutage 
-                  ? "bg-red-950/40 border-red-500/30 text-red-300" 
-                  : "bg-emerald-950/40 border-emerald-500/30 text-emerald-300"
+                  ? "bg-[#D94F58]/10 border-[#D94F58]/20 text-[#D94F58]" 
+                  : "bg-[#27845B]/10 border-[#27845B]/20 text-[#27845B]"
               }`}>
                 <div className="flex items-center gap-2.5">
                   {isOutage ? (
-                    <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 animate-bounce" />
+                    <AlertTriangle className="w-4 h-4 text-[#D94F58] shrink-0" />
                   ) : (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 text-[#27845B] shrink-0" />
                   )}
                   <div>
-                    <div className="text-xs font-bold uppercase">
-                      {isOutage ? "Power Outage Active (Teammate Demands Energy)" : "Power Outage Fully Mitigated via Solar P2P"}
+                    <div className="text-xs font-semibold uppercase tracking-wide">
+                      {isOutage ? "Deficit Detected — Energy Needed" : "Outage Mitigated via Solar P2P"}
                     </div>
-                    <div className="text-[11px] opacity-80">
+                    <div className="text-[11px] opacity-80 font-mono">
                       {isOutage 
-                        ? `Deficit: ${consumerRequiredUnits} units • Auto-paying you ${totalEthCost} ETH @ 0.2 ETH/unit`
-                        : `${transferUnits} kWh dispatched directly from your Solar Rooftop`}
+                        ? `Required: ${consumerRequiredUnits} units • Escrow cost: ${totalEthCost} ETH`
+                        : `${transferUnits} units delivered from Solar Rooftop Alpha`}
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Consumer Building Architectural SVG (Matching Photo 2 - Red Brick Villa, No Solar) */}
-            <div className={`relative flex flex-col items-center justify-center p-3 rounded-2xl border w-44 h-44 shrink-0 transition-colors shadow-inner ${
-              isOutage 
-                ? "bg-zinc-950/90 border-red-500/40" 
-                : "bg-zinc-950/90 border-sky-500/40"
-            }`}>
-              <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
-                <span className={`w-2 h-2 rounded-full ${isOutage ? "bg-red-500 animate-ping" : "bg-emerald-400"}`} />
-                <span className={`text-[9px] font-mono font-bold ${isOutage ? "text-red-400" : "text-emerald-400"}`}>
+            {/* Consumer Building Architectural SVG */}
+            <div className="relative flex flex-col items-center justify-center p-3 rounded-2xl border border-[#D8D8DE] w-44 h-44 shrink-0 transition-colors bg-[#F5F5F7] shadow-inner">
+              <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                <span className={`w-1.5 h-1.5 rounded-full ${isOutage ? "bg-[#D94F58] animate-pulse" : "bg-[#27845B]"}`} />
+                <span className={`text-[9px] font-mono font-semibold ${isOutage ? "text-[#D94F58]" : "text-[#27845B]"}`}>
                   {isOutage ? "GRID OUTAGE" : "ONLINE (P2P)"}
                 </span>
               </div>
               
               <svg className="w-32 h-32 overflow-visible" viewBox="0 0 160 160" fill="none">
                 <defs>
-                  {/* Red Brick Gradient */}
                   <linearGradient id="brickGrad" x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0%" stopColor="#b91c1c" />
                     <stop offset="50%" stopColor="#991b1b" />
                     <stop offset="100%" stopColor="#7f1d1d" />
                   </linearGradient>
-                  {/* Timber Truss Color */}
-                  <linearGradient id="timberGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#92400e" />
-                    <stop offset="100%" stopColor="#78350f" />
-                  </linearGradient>
-                  {/* Consumer Window Color (Dim/Red during Outage, Warm Gold when powered) */}
                   <linearGradient id="consumerWindowLight" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={isOutage ? "#450a0a" : "#fef08a"} />
-                    <stop offset="100%" stopColor={isOutage ? "#1f0404" : "#f59e0b"} />
+                    <stop offset="0%" stopColor={isOutage ? "#fee2e2" : "#fef08a"} />
+                    <stop offset="100%" stopColor={isOutage ? "#fecaca" : "#f59e0b"} />
                   </linearGradient>
                 </defs>
 
-                {/* Back / Side Cream Walls */}
                 <polygon points="95,45 140,55 140,135 95,135" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
-
-                {/* Front Main Red-Brick Tower Facade (Photo 2) */}
                 <polygon points="35,55 95,45 95,135 35,135" fill="url(#brickGrad)" stroke="#7f1d1d" strokeWidth="1.2" />
-
-                {/* Brick Texture Lines */}
                 <line x1="35" y1="70" x2="95" y2="60" stroke="#7f1d1d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.6" />
                 <line x1="35" y1="85" x2="95" y2="75" stroke="#7f1d1d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.6" />
                 <line x1="35" y1="100" x2="95" y2="90" stroke="#7f1d1d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.6" />
                 <line x1="35" y1="115" x2="95" y2="105" stroke="#7f1d1d" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.6" />
-
-                {/* Left Brick Pillar Porch (Photo 2) */}
                 <rect x="20" y="75" width="16" height="60" fill="#991b1b" stroke="#7f1d1d" strokeWidth="1" />
                 <rect x="18" y="72" width="20" height="4" fill="#b91c1c" />
-
-                {/* Multi-Tiered Slate Gabled Roofs with Overhangs (Photo 2 - No Solar) */}
-                {/* Main Roof Tier */}
-                <polygon points="30,55 65,30 100,55" fill="#334155" stroke="#1e293b" strokeWidth="1.5" />
-                <polygon points="65,30 100,55 145,45 110,24" fill="#1e293b" stroke="#0f172a" strokeWidth="1.5" />
-
-                {/* Wooden Truss Triangular Overhang (Photo 2) */}
+                <polygon points="30,55 65,30 100,55" fill="#475569" stroke="#334155" strokeWidth="1.5" />
+                <polygon points="65,30 100,55 145,45 110,24" fill="#334155" stroke="#1e293b" strokeWidth="1.5" />
                 <polygon points="18,72 35,52 52,72" fill="#78350f" stroke="#451a03" strokeWidth="1.2" />
-                {/* Truss Struts */}
                 <line x1="35" y1="52" x2="35" y2="72" stroke="#d97706" strokeWidth="1.2" />
-                <line x1="26" y1="62" x2="44" y2="62" stroke="#d97706" strokeWidth="1" />
-                <line x1="22" y1="72" x2="35" y2="62" stroke="#d97706" strokeWidth="1" />
-                <line x1="48" y1="72" x2="35" y2="62" stroke="#d97706" strokeWidth="1" />
-
-                {/* Upper Triangular Gable Attic Feature (Photo 2) */}
                 <polygon points="65,36 82,20 99,36" fill="#78350f" stroke="#451a03" strokeWidth="1" />
-                <line x1="82" y1="20" x2="82" y2="36" stroke="#d97706" strokeWidth="1" />
-
-                {/* Center Balcony with Glass Railing (Photo 2) */}
                 <rect x="42" y="86" width="38" height="6" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1" />
                 <rect x="40" y="80" width="42" height="7" fill="rgba(56,189,248,0.2)" stroke="#38bdf8" strokeWidth="0.8" />
-
-                {/* Large Wooden Grid Picture Windows */}
-                {/* Upper Floor Balcony French Doors */}
                 <rect x="46" y="62" width="30" height="24" rx="1" fill="url(#consumerWindowLight)" stroke="#451a03" strokeWidth="1.2" />
-                <line x1="61" y1="62" x2="61" y2="86" stroke="#451a03" strokeWidth="1" />
-                <line x1="46" y1="74" x2="76" y2="74" stroke="#451a03" strokeWidth="1" />
-
-                {/* Ground Floor Windows */}
                 <rect x="52" y="96" width="24" height="26" rx="1" fill="url(#consumerWindowLight)" stroke="#451a03" strokeWidth="1.2" />
-                <line x1="64" y1="96" x2="64" y2="122" stroke="#451a03" strokeWidth="1" />
-                <line x1="52" y1="108" x2="76" y2="108" stroke="#451a03" strokeWidth="1" />
-
-                {/* Right Side Wall Windows */}
                 <rect x="108" y="60" width="14" height="24" rx="1" fill="url(#consumerWindowLight)" stroke="#64748b" strokeWidth="1" />
                 <rect x="108" y="98" width="14" height="24" rx="1" fill="url(#consumerWindowLight)" stroke="#64748b" strokeWidth="1" />
-
-                {/* Landscaping / Shrub Planter Box at base */}
                 <rect x="25" y="128" width="110" height="8" fill="#78350f" />
-                <circle cx="35" cy="126" r="5" fill="#15803d" />
-                <circle cx="48" cy="125" r="6" fill="#166534" />
-                <circle cx="85" cy="126" r="5" fill="#15803d" />
-                <circle cx="102" cy="125" r="6" fill="#166534" />
               </svg>
               
-              <div className={`mt-0.5 flex items-center gap-1 text-[11px] font-semibold font-mono ${
-                isOutage ? "text-red-400" : "text-sky-400"
+              <div className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium font-mono ${
+                isOutage ? "text-[#D94F58]" : "text-[#27845B]"
               }`}>
                 {isOutage ? (
                   <>
-                    <Zap className="w-3.5 h-3.5 text-red-500 line-through" /> Brick Villa (Outage)
+                    <Zap className="w-3.5 h-3.5 text-[#D94F58]" />
+                    <span>Brick Residence Beta</span>
                   </>
                 ) : (
                   <>
-                    <Zap className="w-3.5 h-3.5 text-emerald-400" /> Powered via Solar Bridge
+                    <Zap className="w-3.5 h-3.5 text-[#27845B]" />
+                    <span>Powered via P2P</span>
                   </>
                 )}
               </div>
@@ -739,105 +649,105 @@ export default function P2PTradingSimulator() {
           </div>
 
           {/* ================= ACTION CONTROLS & STATUS LOG ================= */}
-          <div className="w-full pt-4 flex flex-col items-center space-y-6">
+          <div className="w-full pt-4 flex flex-col items-center space-y-5">
             
             {status === "idle" && (
               <button
                 onClick={handleExecuteTrade}
-                className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl text-base font-bold text-black bg-gradient-to-r from-emerald-400 via-teal-300 to-sky-400 hover:from-emerald-300 hover:to-sky-300 shadow-[0_0_30px_rgba(16,185,129,0.35)] hover:shadow-[0_0_40px_rgba(16,185,129,0.6)] transform hover:-translate-y-0.5 transition-all active:scale-95 cursor-pointer"
+                className="group relative inline-flex items-center gap-3 px-8 py-3.5 rounded-xl text-sm font-semibold text-white bg-[#1D1D1F] hover:bg-[#343438] shadow-sm transition-all transform hover:-translate-y-0.5 active:scale-95 cursor-pointer"
               >
-                <Zap className="w-5 h-5 fill-black group-hover:scale-110 transition-transform" />
-                <span>Execute On-Chain Trade (Sell {transferUnits} kWh & Receive {totalEthCost} SepoliaETH)</span>
+                <Zap className="w-4 h-4 text-[#D99A22]" />
+                <span>Execute On-Chain P2P Trade ({transferUnits} units • {totalEthCost} SepoliaETH)</span>
               </button>
             )}
 
             {status === "requesting_metamask" && (
-              <div className="p-4 rounded-2xl bg-sky-950/60 border border-sky-500/50 text-center space-y-2 animate-pulse">
-                <div className="text-sm font-bold text-sky-400 flex items-center justify-center gap-2">
-                  <Wallet className="w-4 h-4" /> Please Confirm Transaction in MetaMask Popup...
+              <div className="p-5 rounded-2xl bg-white border border-[#D8D8DE] shadow-sm text-center space-y-2">
+                <div className="text-sm font-semibold text-[#5277D5] flex items-center justify-center gap-2">
+                  <Wallet className="w-4 h-4" /> Please Confirm Transaction in MetaMask...
                 </div>
-                <div className="text-xs text-zinc-300 font-mono">
+                <div className="text-xs text-[#6E6E73] font-mono">
                   Transferring {totalEthCost} SepoliaETH from Buyer ({consumerAddress.slice(0, 8)}...) to Seller ({prosumerAddress.slice(0, 8)}...)
                 </div>
               </div>
             )}
 
             {status === "executing" && (
-              <div className="w-full max-w-xl space-y-4 p-5 rounded-2xl bg-zinc-900/90 border border-emerald-500/40 animate-pulse-glow">
-                <div className="flex items-center justify-between text-sm font-semibold text-emerald-400">
+              <div className="w-full max-w-xl space-y-3.5 p-6 rounded-2xl bg-white border border-[#D8D8DE] shadow-sm">
+                <div className="flex items-center justify-between text-xs font-semibold text-[#1D1D1F]">
                   <span className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                    Executing On-Chain Transfer (Teammate &rarr; You)...
+                    <span className="w-2 h-2 rounded-full bg-[#3A7D5C] animate-ping" />
+                    Executing On-Chain Settlement...
                   </span>
-                  <span>Step {currentStep + 1} of {steps.length}</span>
+                  <span className="font-mono text-[#6E6E73]">Step {currentStep + 1} of {steps.length}</span>
                 </div>
 
                 {/* Progress bar */}
-                <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+                <div className="w-full h-1.5 rounded-full bg-[#EBEBEF] overflow-hidden">
                   <div 
-                    className="h-full bg-gradient-to-r from-emerald-400 to-sky-400 transition-all duration-500" 
+                    className="h-full bg-[#3A7D5C] transition-all duration-500" 
                     style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
                   />
                 </div>
 
-                <div className="text-left bg-black/50 p-3 rounded-xl border border-zinc-800 font-mono text-xs text-zinc-300 space-y-1">
-                  <div className="text-emerald-400 font-bold">{steps[currentStep].title}</div>
-                  <div className="text-zinc-400">{steps[currentStep].desc}</div>
+                <div className="bg-[#F5F5F7] p-3.5 rounded-xl border border-[#E5E5EA] font-mono text-xs text-[#1D1D1F] space-y-0.5">
+                  <div className="text-[#3A7D5C] font-semibold">{steps[currentStep].title}</div>
+                  <div className="text-[#6E6E73] text-[11px]">{steps[currentStep].desc}</div>
                 </div>
               </div>
             )}
 
             {status === "completed" && (
-              <div className="w-full max-w-xl space-y-4 p-6 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-center">
-                <div className="inline-flex p-3 rounded-full bg-emerald-500/20 text-emerald-400 mb-1">
-                  <CheckCircle2 className="w-8 h-8" />
+              <div className="w-full max-w-xl space-y-4 p-6 rounded-2xl bg-white border border-[#D8D8DE] shadow-sm text-center">
+                <div className="inline-flex p-3 rounded-full bg-[#27845B]/10 text-[#27845B] mb-1">
+                  <CheckCircle2 className="w-7 h-7" />
                 </div>
-                <h4 className="text-xl font-bold text-white">Trade Executed & Settled On-Chain!</h4>
-                <p className="text-zinc-300 text-xs sm:text-sm">
-                  {transferUnits} kWh was transferred to your Teammate. 
-                  {totalEthCost} SepoliaETH was successfully transferred from Teammate&apos;s wallet to your wallet!
+                <h4 className="text-lg font-semibold text-[#1D1D1F]">Trade Settled On-Chain</h4>
+                <p className="text-[#6E6E73] text-xs sm:text-sm">
+                  {transferUnits} units dispatched to Consumer Beta. {totalEthCost} SepoliaETH transferred to Prosumer Alpha.
                 </p>
 
-                <div className="bg-black/60 p-3 rounded-xl border border-zinc-800 font-mono text-xs text-left space-y-1.5">
-                  <div className="text-zinc-400">Sepolia Transaction Hash:</div>
-                  <div className="text-emerald-400 break-all flex items-center justify-between">
-                    <span className="truncate mr-2">{txHash}</span>
+                <div className="bg-[#F5F5F7] p-4 rounded-xl border border-[#E5E5EA] font-mono text-xs text-left space-y-2">
+                  <div className="text-[#6E6E73] text-[11px]">Transaction Receipt:</div>
+                  <div className="text-[#27845B] break-all flex items-center justify-between gap-2">
+                    <span className="truncate">{txHash}</span>
                     <a
                       href={`https://sepolia.etherscan.io/tx/${txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[10px] px-2 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded shrink-0 transition"
+                      className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-white hover:bg-[#EBEBEF] text-[#27845B] border border-[#D8D8DE] rounded-lg shrink-0 transition"
                     >
-                      <span>View on Etherscan</span>
+                      <span>Etherscan</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
-                  <div className="text-zinc-400 text-[11px] pt-1 flex items-center justify-between border-t border-zinc-800">
-                    <span>Backend Status: <strong>Confirmed &amp; Logged</strong></span>
-                    <span className="text-sky-400">Rate: 0.2 ETH/kWh</span>
+                  <div className="text-[#6E6E73] text-[11px] pt-2 flex items-center justify-between border-t border-[#E5E5EA]">
+                    <span>Status: <strong className="text-[#1D1D1F]">Confirmed &amp; Logged</strong></span>
+                    <span className="text-[#5277D5]">0.2 ETH / unit</span>
                   </div>
                 </div>
 
                 <div className="pt-2 flex items-center justify-center gap-3">
                   <button
                     onClick={handleReset}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 transition cursor-pointer"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold bg-white hover:bg-[#F5F5F7] text-[#1D1D1F] border border-[#D8D8DE] shadow-xs transition cursor-pointer"
                   >
-                    <RotateCcw className="w-4 h-4" /> Reset &amp; Sell Again
+                    <RotateCcw className="w-3.5 h-3.5 text-[#6E6E73]" />
+                    <span>Reset Simulator</span>
                   </button>
                 </div>
               </div>
             )}
 
             {status === "error" && (
-              <div className="w-full max-w-xl p-4 rounded-2xl bg-red-950/60 border border-red-500/50 text-center space-y-3">
-                <div className="text-sm font-bold text-red-400 flex items-center justify-center gap-2">
-                  <AlertTriangle className="w-5 h-5" /> Transaction Error
+              <div className="w-full max-w-xl p-5 rounded-2xl bg-[#D94F58]/10 border border-[#D94F58]/20 text-center space-y-2.5">
+                <div className="text-xs font-semibold text-[#D94F58] flex items-center justify-center gap-2">
+                  <AlertTriangle className="w-4 h-4" /> Transaction Failed
                 </div>
-                <p className="text-xs text-zinc-300 font-mono">{errorMessage}</p>
+                <p className="text-xs text-[#1D1D1F] font-mono">{errorMessage}</p>
                 <button
                   onClick={handleReset}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-white"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-white hover:bg-[#F5F5F7] text-[#1D1D1F] border border-[#D8D8DE] shadow-xs transition cursor-pointer"
                 >
                   Try Again
                 </button>

@@ -19,7 +19,7 @@ const NeighborhoodMicrogrid3D = dynamic(
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col bg-[#07090d] text-slate-100 selection:bg-emerald-500 selection:text-black">
+    <div className="min-h-screen flex flex-col bg-[#F5F5F7] text-[#1D1D1F] selection:bg-[#3A7D5C]/20 selection:text-[#1D1D1F]">
       {/* Sticky Navigation */}
       <Navbar />
 
@@ -27,22 +27,31 @@ export default function Home() {
       <main className="flex-1">
         
         {/* ================= OPENING EXPERIENCE: 12-HOUSE 3D RESIDENTIAL MICROGRID ================= */}
-        <section className="relative w-full h-[92vh] border-b border-zinc-800/80 bg-[#07090d]">
+        <section className="relative w-full h-[92vh] border-b border-[#D8D8DE] bg-[#F5F5F7]">
           <NeighborhoodMicrogrid3D />
         </section>
 
         {/* ================= SECTION DIVIDER & MARKETPLACE ENTRY ================= */}
-        <div id="marketplace" className="py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-zinc-800/60">
+        <div id="overview" className="py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-[#D8D8DE]">
           <div>
-            <div className="text-xs font-mono text-emerald-400 uppercase tracking-widest">
-              DECENTRALIZED ENERGY PROTOCOL
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-mono uppercase tracking-wider bg-[#3A7D5C]/10 text-[#3A7D5C] border border-[#3A7D5C]/20 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#3A7D5C] animate-pulse" />
+              Decentralized Microgrid Settlement Engine
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white mt-0.5">
-              Live Settlement & P2P Trading Marketplace
+            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1D1D1F]">
+              Peer-to-Peer Energy Trading & Load Balancing
             </h2>
           </div>
-          <div className="text-xs font-mono text-zinc-400">
-            Sepolia Testnet • EnergyToken.sol • Trading.sol • Supabase Realtime
+          <div className="flex items-center gap-2.5 text-xs font-mono text-[#6E6E73]">
+            <span className="px-3 py-1 rounded-lg bg-white border border-[#D8D8DE] text-[#1D1D1F] shadow-xs">
+              Sepolia Testnet
+            </span>
+            <span className="px-3 py-1 rounded-lg bg-white border border-[#D8D8DE] text-[#6E6E73] shadow-xs">
+              EnergyToken.sol
+            </span>
+            <span className="px-3 py-1 rounded-lg bg-white border border-[#D8D8DE] text-[#6E6E73] shadow-xs">
+              Trading.sol
+            </span>
           </div>
         </div>
 

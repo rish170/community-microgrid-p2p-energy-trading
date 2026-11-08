@@ -12,9 +12,9 @@ function GridNodes() {
   const [positions, colors] = useMemo(() => {
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
-    const colorA = new THREE.Color("#10b981"); // Solar emerald
-    const colorB = new THREE.Color("#38bdf8"); // Energy cyan
-    const colorC = new THREE.Color("#f59e0b"); // Solar amber
+    const colorA = new THREE.Color("#27845B"); // Restrained forest green
+    const colorB = new THREE.Color("#5277D5"); // Energy trading blue
+    const colorC = new THREE.Color("#D99A22"); // Solar amber
 
     for (let i = 0; i < count; i++) {
       const i3 = i * 3;
