@@ -22,9 +22,11 @@ Supabase SQL (households.in_live_sim) uses the SAME rule, so they always match.
 If SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set, this falls back to
 DryRunSink and only logs what it WOULD write.
 
-Run (from the data-api folder, so that "src" is importable):
-    uvicorn main:app --port 8000
-(--reload restarts the app, and the replay with it, on every file save.)
+Run from the data-api folder (NOT from inside src), with the venv active:
+    uvicorn src.main:app --port 8000
+Relative paths such as ./data and ./models, and the .env file, are all read
+from the data-api folder. (--reload restarts the app, and the replay with it,
+on every file save, so leave it off while running a demo.)
 """
 
 import asyncio
