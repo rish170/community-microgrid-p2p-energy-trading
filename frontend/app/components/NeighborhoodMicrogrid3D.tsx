@@ -56,28 +56,18 @@ function SolarPanelModule({ width = 0.45, length = 0.65 }: { width?: number; len
         <boxGeometry args={[width + 0.03, 0.016, length + 0.03]} />
         <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.3} />
       </mesh>
-      {/* Dark Photovoltaic Silicon Cell */}
-      <mesh position={[0, 0.018, 0]} castShadow>
+      {/* Photovoltaic Silicon Cell */}
+      <mesh position={[0, 0.018, 0]} castShadow receiveShadow>
         <boxGeometry args={[width, 0.012, length]} />
         <meshStandardMaterial 
-          color="#1e293b" 
-          roughness={0.2} 
-          metalness={0.85}
-          emissive="#1e3a5f"
+          color="#0F172A" 
+          roughness={0.25} 
+          metalness={0.8}
+          emissive="#1E3A8A"
           emissiveIntensity={0.2}
         />
       </mesh>
-      {/* Anti-reflective Glass Finish Layer */}
-      <mesh position={[0, 0.026, 0]}>
-        <planeGeometry args={[width * 0.94, length * 0.94]} />
-        <meshStandardMaterial 
-          color="#38bdf8" 
-          roughness={0.1} 
-          metalness={0.9}
-          emissive="#0284c7"
-          emissiveIntensity={0.25}
-        />
-      </mesh>
+
     </group>
   );
 }
@@ -168,7 +158,8 @@ function House3D({
         // Lower the house parcel grass mesh so it sits on the ground without cutting flowers or postboxes (Request 8)
         const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
         if (mesh.name === "Object_2" || mesh.name === "Object_0" || (mat && (mat as THREE.Material).name === "Material.013")) {
-          mesh.position.y = -1.02; // relative to house group: 0.29 + (-0.951 * 0.28) = 0.0237 flush on ground
+          mesh.geometry = mesh.geometry.clone();
+          mesh.geometry.translate(0, 0, -2.56); // World Y translates directly from 0.3093 down to 0.0044 flush on ground
         }
 
         if (Array.isArray(mesh.material)) {
@@ -222,13 +213,24 @@ function House3D({
   // House scaling & base alignment
   const scale = 0.28;
   const yOffset = 0.29; // aligns house flush on ground pad
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   return (
     <group 
       position={[house.x, 0, house.z]} 
       rotation={[0, house.rotationY, 0]}
+      onPointerDown={(e) => {
+        pointerDownPos.current = { x: e.clientX, y: e.clientY };
+      }}
       onClick={(e) => {
         e.stopPropagation();
+        if (pointerDownPos.current) {
+          const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
+          if (dist > 5) {
+            // User was dragging or orbiting the 3D scene, not clicking to select
+            return;
+          }
+        }
         onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
       }}
       onPointerOver={(e) => {
@@ -305,9 +307,9 @@ function House3D({
         </mesh>
       )}
 
-      {/* Floating Overhead Badge (Hidden when another single house is zoomed in) */}
+      {/* Floating Overhead Badge (Hidden when modal open or another single house is zoomed in) */}
       {showBadge && (
-        <Html position={[0, 2.5, 0]} center distanceFactor={24}>
+        <Html position={[0, 2.5, 0]} center distanceFactor={24} zIndexRange={[1, 10]}>
           <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
             isSelected 
               ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
@@ -1189,7 +1191,9 @@ function CameraController({
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
-  const transitionFrame = useRef(0);
+  const transitionProgress = useRef(0);
+  const startPos = useRef(new THREE.Vector3(0, 15, 23));
+  const startTarget = useRef(new THREE.Vector3(0, 0.5, 0));
 
   // Stop camera transition immediately when the user rotates, drags, or zooms (Request 6)
   useEffect(() => {
@@ -1208,10 +1212,14 @@ function CameraController({
     // Only transition camera when user selects a different house or resets view
     if (selectedHouse?.id !== prevSelectedId.current) {
       isTransitioning.current = true;
-      transitionFrame.current = 0;
+      transitionProgress.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
+      if (controlsRef.current) {
+        startPos.current.copy(controlsRef.current.object.position);
+        startTarget.current.copy(controlsRef.current.target);
+      }
     }
-  }, [selectedHouse]);
+  }, [selectedHouse, controlsRef]);
 
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
@@ -1222,32 +1230,44 @@ function CameraController({
     controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -8.0, 8.0);
 
     if (isTransitioning.current) {
-      transitionFrame.current++;
+      // Smooth cubic ease out progression
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.2);
+      const t = 1 - Math.pow(1 - transitionProgress.current, 3);
+
       if (selectedHouse) {
         // FRONT VIEW: Look at the house from the central road (street side facing the front porch) (Request 7)
         // North row (z < 0): front porch faces +Z (road), camera placed at z = selectedHouse.z + 5.2
         // South row (z > 0): front porch faces -Z (road), camera placed at z = selectedHouse.z - 5.2
-        const cameraZ = selectedHouse.z < 0 
-          ? selectedHouse.z + 5.2 
-          : selectedHouse.z - 5.2;
-        const targetPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
-        const targetLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
+        const isSouthRow = selectedHouse.z > 0;
+        const cameraZ = isSouthRow ? selectedHouse.z - 5.2 : selectedHouse.z + 5.2;
+        const destPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
+        const destLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
 
-        state.camera.position.lerp(targetPos, delta * 4.5);
-        controlsRef.current.target.lerp(targetLook, delta * 4.5);
+        controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
 
-        if (state.camera.position.distanceTo(targetPos) < 0.15 || transitionFrame.current > 45) {
+        const currentPos = new THREE.Vector3().lerpVectors(startPos.current, destPos, t);
+        // For South row houses: if moving from behind (+Z) to front (-Z), swing the camera around the side
+        // in an arc so it NEVER passes through the roof zenith or triggers top view gimbal clamping
+        if (isSouthRow && startPos.current.z > selectedHouse.z) {
+          const arcSide = selectedHouse.x >= 0 ? -1 : 1;
+          const arc = Math.sin(t * Math.PI) * 4.5 * arcSide;
+          currentPos.x += arc;
+        }
+
+        state.camera.position.copy(currentPos);
+
+        if (transitionProgress.current >= 1 || state.camera.position.distanceTo(destPos) < 0.08) {
           isTransitioning.current = false;
         }
       } else {
         // Return smoothly to default cinematic aerial angle
-        const defaultPos = new THREE.Vector3(0, 15, 23);
-        const defaultLook = new THREE.Vector3(0, 0.5, 0);
+        const destPos = new THREE.Vector3(0, 15, 23);
+        const destLook = new THREE.Vector3(0, 0.5, 0);
 
-        state.camera.position.lerp(defaultPos, delta * 3.5);
-        controlsRef.current.target.lerp(defaultLook, delta * 3.5);
+        controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
+        state.camera.position.lerpVectors(startPos.current, destPos, t);
 
-        if (state.camera.position.distanceTo(defaultPos) < 0.2 || transitionFrame.current > 45) {
+        if (transitionProgress.current >= 1 || state.camera.position.distanceTo(destPos) < 0.1) {
           isTransitioning.current = false;
         }
       }
@@ -1304,9 +1324,8 @@ export default function NeighborhoodMicrogrid3D() {
         prev.includes(houseId) ? prev.filter((id) => id !== houseId) : [...prev, houseId]
       );
     } else {
-      setSelectedHouseIds((prev) =>
-        prev.length === 1 && prev[0] === houseId ? [] : [houseId]
-      );
+      // Keep house focused; do not toggle off and reset view on drag release or re-click
+      setSelectedHouseIds([houseId]);
     }
   };
 
@@ -1471,7 +1490,7 @@ export default function NeighborhoodMicrogrid3D() {
     }, 6000);
   };
 
-  // Smooth scroll-to-zoom and zoom-to-page-scroll transition (Request 5)
+  // Smooth scroll-to-zoom and zoom-to-page-scroll transition (Request 5 & Smoothness fix)
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (!controlsRef.current) return;
     const camera = controlsRef.current.object;
@@ -1480,21 +1499,13 @@ export default function NeighborhoodMicrogrid3D() {
 
     // If scrolling DOWN (deltaY > 0)
     if (e.deltaY > 0) {
-      // Once zoomed out near max distance (~36.5 out of 38), scroll the webpage down natively
-      if (distance >= 36.5) {
+      // Once zoomed out near max distance, disable 3D zoom so browser natively scrolls page with hardware acceleration
+      if (distance >= 37.2) {
         controlsRef.current.enableZoom = false;
-        window.scrollBy({ top: e.deltaY, behavior: "auto" });
-      } else {
-        controlsRef.current.enableZoom = true;
       }
     } else if (e.deltaY < 0) {
-      // If scrolling UP (deltaY < 0)
-      if (window.scrollY > 0) {
-        // Webpage is scrolled down: scroll webpage up until it reaches top
-        controlsRef.current.enableZoom = false;
-        window.scrollBy({ top: e.deltaY, behavior: "auto" });
-      } else {
-        // Webpage is fully at top: resume 3D canvas zooming in
+      // If scrolling UP (deltaY < 0) while page is at the top, re-enable 3D zoom
+      if (window.scrollY <= 2) {
         controlsRef.current.enableZoom = true;
       }
     }
@@ -1503,8 +1514,8 @@ export default function NeighborhoodMicrogrid3D() {
   useEffect(() => {
     const handleScroll = () => {
       if (controlsRef.current) {
-        // While scrolled down the page, disable 3D canvas zoom so scrolling up reaches top
-        if (window.scrollY > 0) {
+        // While scrolled down the page, disable 3D zoom so scrolling up smoothly navigates page
+        if (window.scrollY > 2) {
           controlsRef.current.enableZoom = false;
         } else {
           controlsRef.current.enableZoom = true;
@@ -1577,15 +1588,15 @@ export default function NeighborhoodMicrogrid3D() {
               isSelected={selectedHouseIds.includes(house.id)}
               isHovered={hoveredHouseId === house.id}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
-              showBadge={selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id)}
+              showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
               onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
               onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
             />
           ))}
         </Suspense>
 
-        {/* 6. Microgrid Underground Conduit & Active Trade Energy Beam */}
-        <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} cutLines={cutLines} />
+        {/* 6. Microgrid Underground Conduit & Active Trade Energy Beam (Preserved in code, hidden from 3D scene) */}
+        {/* <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} cutLines={cutLines} /> */}
 
         {/* 7. Full 360-Degree OrbitControls with strict world boundary constraints */}
         <OrbitControls 
@@ -1930,21 +1941,10 @@ export default function NeighborhoodMicrogrid3D() {
         </div>
       )}
 
-      {/* ================= BOTTOM INTERACTION HELPER ================= */}
-      <div className="absolute bottom-5 right-6 z-20 hidden md:flex items-center gap-3 px-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#CBD5E1] text-[11px] font-mono text-[#64748B] shadow-sm pointer-events-none">
-        <span>Orbit: 360° Drag</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span>Zoom: Scroll</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span>Shift/Ctrl+Click: Multi-Select</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span className="text-[#0284C7] font-semibold">Click: Inspect &amp; Cut Line</span>
-      </div>
-
       {/* ================= 3D VIEWPORT ENERGY REQUEST MODAL (M4) ================= */}
       {isRequestModalOpen && modalRequesterId && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl border border-[#CBD5E1] shadow-[0_24px_48px_rgba(0,0,0,0.2)] max-w-sm w-full p-6 relative font-sans">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-[#CBD5E1] shadow-[0_24px_48px_rgba(0,0,0,0.25)] max-w-sm w-full p-6 relative font-sans">
             <button
               onClick={() => setIsRequestModalOpen(false)}
               className="absolute top-5 right-5 text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
