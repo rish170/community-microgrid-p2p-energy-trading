@@ -19,25 +19,25 @@ export default function VivaDefenseModal() {
 
   const topics = [
     {
-      title: "Smart Contract Safety & Escrow Architecture",
+      title: "Smart Contract Settlement & Option B Architecture",
       icon: <ShieldCheck className="w-4 h-4 text-emerald-400" />,
-      question: "How does Trading.sol ensure that a prosumer cannot double-spend energy or fail to deliver after receiving funds?",
-      answer: `Trading.sol implements an atomic escrow pattern. When a consumer initiates a trade, their ETH payment is locked into the smart contract while validating that the seller holds an active ERC-20 EnergyToken balance (1 ENG = 1 kWh).
+      question: "How does Trading.sol ensure atomic settlement on Sepolia without ERC-20 token deadlocks?",
+      answer: `Trading.sol implements Option B direct test ETH settlement. When a prosumer accepts an energy request, 0.000100 SepoliaETH is transferred directly from the buyer to the seller, atomically emitting the on-chain TradeExecuted event with trade parameters (kWh, price, timestamp).
       
 Key architectural safeguards:
-1. Reentrancy Protection: OpenZeppelin ERC-20 standard transfer routines prevent reentrancy attacks during ETH transfers.
-2. Atomic Unit Settlement: Energy tokens are transferred from the seller to the buyer, and payment is released to the seller within the single transaction block.
-3. Access Control: Minting privileges for EnergyToken are restricted to the verified Microgrid IoT Oracle (Ownable pattern).`
+1. Low Gas & Zero Token Friction: Eliminates synthetic token wrapping, staking, or secondary liquidity pools, ensuring microgrid trades settle in under 1 block.
+2. Direct Wallet Delivery: Uses call{value: msg.value}("") to guarantee atomic value transfer directly into the prosumer's MetaMask wallet.
+3. Decoupled Physical Settlement: The backend verifies prosumer battery reserves and physical line connection before authorizing on-chain execution.`
     },
     {
-      title: "Tokenomics: 1 Token = 1 kWh Design Justification",
+      title: "Direct ETH vs ERC-20 Tokenomics Trade-Off",
       icon: <Cpu className="w-4 h-4 text-sky-400" />,
-      question: "Why use an ERC-20 token for energy representation rather than direct raw database entries or NFTs?",
-      answer: `ERC-20 standardizes unit-level fungibility and decimal precision (10^18), which is critical for fractional energy trading (e.g., 0.25 kWh consumed by a single appliance).
+      question: "Why was direct ETH micro-settlement chosen over an ERC-20 utility token (Option B vs Option A)?",
+      answer: `While ERC-20 tokens are common in academic whitepapers, in live microgrids they introduce severe operational friction:
       
-Advantages of ERC-20:
-- Seamless Composability: Enables automated liquidity pools, future DeFi collateralization of clean energy credits, and sub-second multi-peer settlement.
-- Deflationary Burn Mechanism: When physical energy is consumed from the microgrid battery, the burn(kWh) method burns tokens permanently, maintaining physical-to-digital equilibrium.`
+1. Gas Overhead: ERC-20 requires double transactions (Approve + TransferFrom), doubling gas costs and block confirmation delay.
+2. Liquidity Dependency: In small residential communities (12 houses), a proprietary token has zero external purchasing power, requiring continuous synthetic market-making.
+3. Native Currency Efficiency: Settling in native ETH (0.0001 ETH per trade) gives prosumers immediately spendable network value with zero friction.`
     },
     {
       title: "Regulatory & Grid Policy (FERC 2222 / IEEE 2030.7)",
@@ -52,13 +52,13 @@ Advantages of ERC-20:
     {
       title: "3-Way Data Architecture (Next.js + Express + Supabase)",
       icon: <FileText className="w-4 h-4 text-purple-400" />,
-      question: "Explain the data flow from physical IoT meters to the blockchain and Power BI.",
+      question: "Explain the data flow from physical IoT meters to the blockchain and Supabase Realtime.",
       answer: `The system follows an event-driven decoupled architecture:
       
-1. IoT / Data-API: Smart meters emit generation and load telemetry every second.
-2. Hardhat / Sepolia: When orders are matched, transactions execute on-chain and emit 'TradeExecuted' events.
-3. Express Backend Listener: Catches 'TradeExecuted' events via Ethers.js websocket provider and mirrors confirmed transactions into Supabase.
-4. Realtime Frontend & Power BI: Supabase Realtime pushes live rows to the Next.js UI, while Power BI aggregates daily carbon offset and tariff savings metrics.`
+1. IoT Replay & ML Engine: Replays real Ausgrid half-hour telemetry and outputs XGBoost 24-hour load and solar forecasts.
+2. Nearest-Prosumer Matching: When a consumer blackouts or isolates, the backend sorts eligible prosumers by 3D Euclidean distance and battery SoC, managing 30s timeouts.
+3. Sepolia Settlement Engine: Transacts 0.0001 ETH directly to the prosumer wallet and pushes event records into Supabase trades and energy_requests tables.
+4. Supabase Realtime WebSocket Push: Streams changes immediately to the 3D WebGL diorama and dashboard without polling.`
     }
   ];
 
@@ -76,7 +76,7 @@ Advantages of ERC-20:
               Prepared for Academic &amp; Technical Defense
             </h3>
             <p className="text-[#6E6E73] text-xs sm:text-sm max-w-xl leading-relaxed">
-              Examine detailed justifications for smart contract security, ERC-20 tokenomics, IEEE 2030.7 standard compliance, and decoupled 3-way data architecture.
+              Examine detailed justifications for Option B direct test ETH settlement, nearest-prosumer matching, IEEE 2030.7 standard compliance, and decoupled Supabase Realtime architecture.
             </p>
           </div>
 
