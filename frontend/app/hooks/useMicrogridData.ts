@@ -89,6 +89,11 @@ export function useMicrogridData() {
   const [lastTickTime, setLastTickTime] = useState<string | null>(null);
   const [energyRequests, setEnergyRequests] = useState<EnergyRequest[]>([]);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
+  const isSocietyOutageRef = useRef<boolean>(isSocietyOutage);
+
+  useEffect(() => {
+    isSocietyOutageRef.current = isSocietyOutage;
+  }, [isSocietyOutage]);
 
   const fetchLatestTelemetry = useCallback(async () => {
     // 1. Check backend status endpoint for authoritative grid and house state
@@ -500,8 +505,9 @@ export function useMicrogridData() {
     // Initial fetch
     fetchLatestTelemetry();
 
-    // Subscribe to Realtime events across readings, forecasts, grid_events, and house_status
-    const channel = supabase.channel("microgrid_3d_live_feed");
+    // Unique channel topic per hook instance to prevent collision across components on same page
+    const uniqueChannelName = `microgrid_feed_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
+    const channel = supabase.channel(uniqueChannelName);
     channelRef.current = channel;
 
     channel
@@ -539,7 +545,7 @@ export function useMicrogridData() {
               if (h.type === "prosumer") {
                 if (surplus > 0) {
                   batteryKwh = Math.min(h.batteryCapacityKwh, Number((batteryKwh + surplus).toFixed(2)));
-                } else if (isSocietyOutage || h.powerState === "battery" || h.powerState === "line_cut") {
+                } else if (isSocietyOutageRef.current || h.powerState === "battery" || h.powerState === "line_cut") {
                   batteryKwh = Math.max(0, Number((batteryKwh + surplus).toFixed(2)));
                   if (batteryKwh <= 0 && solar < usage) {
                     powerState = "blackout";
@@ -676,7 +682,7 @@ export function useMicrogridData() {
         channelRef.current = null;
       }
     };
-  }, [fetchLatestTelemetry, isSocietyOutage]);
+  }, [fetchLatestTelemetry]);
 
   return {
     houses,
