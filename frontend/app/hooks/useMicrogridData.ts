@@ -5,6 +5,7 @@ import {
   HOUSES_CONFIG,
   HouseConfig,
   ALL_LIVE_HOUSEHOLD_IDS,
+  SOLAR_HOUSEHOLD_IDS,
 } from "../config/houses";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "../lib/supabase";
 
@@ -60,6 +61,7 @@ export function useMicrogridData() {
   const [houses, setHouses] = useState<HouseLiveState[]>(INITIAL_LIVE_STATE);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
   const [isSocietyOutage, setIsSocietyOutage] = useState<boolean>(false);
+  const [cutLines, setCutLines] = useState<number[]>([]);
   const [lastTickTime, setLastTickTime] = useState<string | null>(null);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
 
@@ -72,6 +74,9 @@ export function useMicrogridData() {
         if (json.success) {
           if (typeof json.isSocietyOutage === "boolean") {
             setIsSocietyOutage(json.isSocietyOutage);
+          }
+          if (Array.isArray(json.cutLines)) {
+            setCutLines(json.cutLines.map(Number));
           }
           if (Array.isArray(json.houses) && json.houses.length > 0) {
             setHouses((prev) =>
@@ -112,6 +117,18 @@ export function useMicrogridData() {
 
       if (eventData && eventData.length > 0) {
         setIsSocietyOutage(true);
+      }
+
+      // Check active line cut events in Supabase
+      const { data: cutEvents } = await supabase
+        .from("grid_events")
+        .select("household_id")
+        .eq("scope", "house")
+        .eq("event_type", "line_cut")
+        .is("ended_at", null);
+
+      if (cutEvents) {
+        setCutLines(cutEvents.map((e) => Number(e.household_id)).filter(Boolean));
       }
 
       // 3. Fetch persistent house status from Supabase
@@ -256,6 +273,103 @@ export function useMicrogridData() {
     }
   }, []);
 
+  // Cut Individual or Multi-Selected House Power Lines (M3)
+  const cutLinesAction = useCallback(async (householdIds: number[]) => {
+    if (!householdIds || householdIds.length === 0) return;
+    const numIds = householdIds.map(Number);
+
+    setCutLines((prev) => Array.from(new Set([...prev, ...numIds])));
+    setHouses((prev) =>
+      prev.map((h) => {
+        if (!numIds.includes(h.householdId)) return h;
+        return {
+          ...h,
+          powerState: "line_cut",
+          isOutage: true,
+        };
+      })
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/lines/cut`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ household_ids: numIds }),
+      });
+    } catch (err) {
+      console.warn("[EnergyOS] Backend offline on line cut, updating Supabase:", err);
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        const startedAt = new Date().toISOString();
+        const events = numIds.map((id) => ({
+          scope: "house",
+          household_id: id,
+          event_type: "line_cut",
+          started_at: startedAt,
+        }));
+        await supabase.from("grid_events").insert(events);
+        for (const id of numIds) {
+          await supabase
+            .from("house_status")
+            .update({ power_state: "line_cut", updated_at: startedAt })
+            .eq("household_id", id);
+        }
+      }
+    }
+  }, []);
+
+  // Restore Individual or Multi-Selected House Power Lines (M3)
+  const restoreLinesAction = useCallback(async (householdIds: number[]) => {
+    if (!householdIds || householdIds.length === 0) return;
+    const numIds = householdIds.map(Number);
+
+    setCutLines((prev) => prev.filter((id) => !numIds.includes(id)));
+    setHouses((prev) =>
+      prev.map((h) => {
+        if (!numIds.includes(h.householdId)) return h;
+        const isSolar = SOLAR_HOUSEHOLD_IDS.includes(h.householdId);
+        const powerState: HouseLiveState["powerState"] = isSocietyOutage
+          ? isSolar ? "battery" : "blackout"
+          : "grid";
+        return {
+          ...h,
+          powerState,
+          isOutage: powerState === "blackout",
+        };
+      })
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/lines/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ household_ids: numIds }),
+      });
+    } catch (err) {
+      console.warn("[EnergyOS] Backend offline on line restore, updating Supabase:", err);
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        const endedAt = new Date().toISOString();
+        await supabase
+          .from("grid_events")
+          .update({ ended_at: endedAt })
+          .eq("scope", "house")
+          .eq("event_type", "line_cut")
+          .in("household_id", numIds)
+          .is("ended_at", null);
+
+        for (const id of numIds) {
+          const isSolar = SOLAR_HOUSEHOLD_IDS.includes(id);
+          const powerState = isSocietyOutage ? (isSolar ? "battery" : "blackout") : "grid";
+          await supabase
+            .from("house_status")
+            .update({ power_state: powerState, updated_at: endedAt })
+            .eq("household_id", id);
+        }
+      }
+    }
+  }, [isSocietyOutage]);
+
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !isSupabaseConfigured()) {
@@ -305,7 +419,7 @@ export function useMicrogridData() {
               if (h.type === "prosumer") {
                 if (surplus > 0) {
                   batteryKwh = Math.min(h.batteryCapacityKwh, Number((batteryKwh + surplus).toFixed(2)));
-                } else if (isSocietyOutage || h.powerState === "battery") {
+                } else if (isSocietyOutage || h.powerState === "battery" || h.powerState === "line_cut") {
                   batteryKwh = Math.max(0, Number((batteryKwh + surplus).toFixed(2)));
                   if (batteryKwh <= 0 && solar < usage) {
                     powerState = "blackout";
@@ -373,6 +487,8 @@ export function useMicrogridData() {
         (payload) => {
           const row = (payload.new || payload.old) as {
             scope?: string;
+            event_type?: string;
+            household_id?: number;
             ended_at?: string | null;
           };
           if (row && row.scope === "society") {
@@ -428,9 +544,12 @@ export function useMicrogridData() {
     setHouses,
     isLiveConnected,
     isSocietyOutage,
+    cutLines,
     lastTickTime,
     triggerSocietyOutage,
     restoreSocietyGrid,
+    cutLinesAction,
+    restoreLinesAction,
     refetch: fetchLatestTelemetry,
   };
 }

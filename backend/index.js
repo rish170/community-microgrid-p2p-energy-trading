@@ -313,6 +313,7 @@ app.get("/api/status", async (req, res) => {
   let isSocietyOutage = inMemoryGridState.isSocietyOutage;
   let activeOutageEvent = inMemoryGridState.activeOutageEvent;
   let houses = Array.from(inMemoryGridState.houseStatus.values());
+  let cutLines = Array.from(inMemoryGridState.cutLines);
 
   if (supabase) {
     try {
@@ -330,6 +331,19 @@ app.get("/api/status", async (req, res) => {
       } else {
         isSocietyOutage = false;
         activeOutageEvent = null;
+      }
+
+      // Check active line cuts
+      const { data: cutEvents } = await supabase
+        .from("grid_events")
+        .select("household_id")
+        .eq("scope", "house")
+        .eq("event_type", "line_cut")
+        .is("ended_at", null);
+
+      if (cutEvents) {
+        inMemoryGridState.cutLines = new Set(cutEvents.map((e) => e.household_id));
+        cutLines = Array.from(inMemoryGridState.cutLines);
       }
 
       const { data: statusData } = await supabase
@@ -353,6 +367,7 @@ app.get("/api/status", async (req, res) => {
     success: true,
     isSocietyOutage,
     activeOutageEvent,
+    cutLines,
     houses
   });
 });
@@ -451,6 +466,122 @@ app.post("/api/outage/restore", async (req, res) => {
     message: "Society grid supply restored. All houses connected to nominal utility grid.",
     isSocietyOutage: false,
     ended_at: endedAt
+  });
+});
+
+// POST Cut Individual House Lines (Isolates selected houses from distribution grid)
+app.post("/api/lines/cut", async (req, res) => {
+  const { household_ids = [], household_id } = req.body;
+  const targetIds = household_ids.length > 0 
+    ? household_ids.map(Number) 
+    : household_id ? [Number(household_id)] : [];
+
+  if (targetIds.length === 0) {
+    return res.status(400).json({ success: false, error: "No household IDs provided" });
+  }
+
+  const startedAt = new Date().toISOString();
+
+  for (const id of targetIds) {
+    inMemoryGridState.cutLines.add(id);
+    const house = inMemoryGridState.houseStatus.get(id);
+    if (house) {
+      house.power_state = "line_cut";
+      house.updated_at = startedAt;
+    }
+  }
+
+  if (supabase) {
+    try {
+      // 1. Insert line_cut event for each house
+      const events = targetIds.map((id) => ({
+        scope: "house",
+        household_id: id,
+        event_type: "line_cut",
+        started_at: startedAt
+      }));
+      await supabase.from("grid_events").insert(events);
+
+      // 2. Upsert house_status
+      const updates = targetIds
+        .map((id) => inMemoryGridState.houseStatus.get(id))
+        .filter(Boolean);
+      for (const u of updates) {
+        await supabase.from("house_status").upsert(u, { onConflict: "household_id" });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase line cut error:", err.message);
+    }
+  }
+
+  console.log(`[Backend Grid Engine] Lines CUT for households: ${targetIds.join(", ")}`);
+
+  res.json({
+    success: true,
+    message: `Power lines cut for households: ${targetIds.join(", ")}`,
+    cutLines: Array.from(inMemoryGridState.cutLines),
+    houses: Array.from(inMemoryGridState.houseStatus.values())
+  });
+});
+
+// POST Restore Individual House Lines
+app.post("/api/lines/restore", async (req, res) => {
+  const { household_ids = [], household_id } = req.body;
+  const targetIds = household_ids.length > 0 
+    ? household_ids.map(Number) 
+    : household_id ? [Number(household_id)] : [];
+
+  if (targetIds.length === 0) {
+    return res.status(400).json({ success: false, error: "No household IDs provided" });
+  }
+
+  const endedAt = new Date().toISOString();
+  const isSocietyOutage = inMemoryGridState.isSocietyOutage;
+
+  for (const id of targetIds) {
+    inMemoryGridState.cutLines.delete(id);
+    const house = inMemoryGridState.houseStatus.get(id);
+    if (house) {
+      const isSolar = SOLAR_HOUSE_IDS.includes(id);
+      if (isSocietyOutage) {
+        house.power_state = isSolar ? "battery" : "blackout";
+      } else {
+        house.power_state = "grid";
+      }
+      house.updated_at = endedAt;
+    }
+  }
+
+  if (supabase) {
+    try {
+      // 1. Close active line_cut events for these households
+      await supabase
+        .from("grid_events")
+        .update({ ended_at: endedAt })
+        .eq("scope", "house")
+        .eq("event_type", "line_cut")
+        .in("household_id", targetIds)
+        .is("ended_at", null);
+
+      // 2. Upsert house_status
+      const updates = targetIds
+        .map((id) => inMemoryGridState.houseStatus.get(id))
+        .filter(Boolean);
+      for (const u of updates) {
+        await supabase.from("house_status").upsert(u, { onConflict: "household_id" });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase line restore error:", err.message);
+    }
+  }
+
+  console.log(`[Backend Grid Engine] Lines RESTORED for households: ${targetIds.join(", ")}`);
+
+  res.json({
+    success: true,
+    message: `Power lines restored for households: ${targetIds.join(", ")}`,
+    cutLines: Array.from(inMemoryGridState.cutLines),
+    houses: Array.from(inMemoryGridState.houseStatus.values())
   });
 });
 

@@ -136,19 +136,23 @@ function House3D({
   house, 
   isSelected, 
   isHovered, 
+  isLineCut = false,
   onSelect, 
   onHover
 }: { 
   house: HouseData; 
   isSelected: boolean; 
   isHovered: boolean; 
-  onSelect: () => void; 
+  isLineCut?: boolean;
+  onSelect: (isMulti: boolean) => void; 
   onHover: (hovered: boolean) => void;
 }) {
   const { scene } = useGLTF("/models/house.glb");
   const isProsumer = house.type === "prosumer";
-  const isBlackout = house.powerState === "blackout" || house.isOutage;
-  const isOnBattery = house.powerState === "battery";
+  const isLineCutActive = isLineCut || house.powerState === "line_cut";
+  // Consumers without line enter blackout; prosumers run on islanded battery/solar
+  const isBlackout = house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
+  const isOnBattery = house.powerState === "battery" || (isProsumer && isLineCutActive);
 
   // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
@@ -216,7 +220,7 @@ function House3D({
       rotation={[0, house.rotationY, 0]}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect();
+        onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
       }}
       onPointerOver={(e) => {
         e.stopPropagation();
@@ -232,7 +236,7 @@ function House3D({
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
         <meshStandardMaterial 
-          color={isBlackout ? "#332228" : "#B0B2BA"} 
+          color={isBlackout ? "#332228" : isLineCutActive ? "#42281D" : "#B0B2BA"} 
           roughness={0.8} 
         />
       </mesh>
@@ -273,7 +277,19 @@ function House3D({
         <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[1.75, 2.15, 32]} />
           <meshBasicMaterial 
-            color={isBlackout ? "#E11D48" : isOnBattery ? "#F59E0B" : isSelected ? "#5277D5" : isProsumer ? "#D99A22" : "#D94F58"} 
+            color={
+              isLineCutActive
+                ? "#D97706"
+                : isBlackout 
+                ? "#E11D48" 
+                : isOnBattery 
+                ? "#F59E0B" 
+                : isSelected 
+                ? "#5277D5" 
+                : isProsumer 
+                ? "#D99A22" 
+                : "#D94F58"
+            } 
             transparent 
             opacity={0.9} 
           />
@@ -285,6 +301,8 @@ function House3D({
         <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
           isSelected 
             ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
+            : isLineCutActive
+            ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
             : isBlackout
             ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
             : isOnBattery
@@ -292,7 +310,9 @@ function House3D({
             : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
         }`}>
           <span className={`w-2.5 h-2.5 rounded-full ${
-            isBlackout
+            isLineCutActive
+              ? "bg-[#D97706] animate-pulse"
+              : isBlackout
               ? "bg-[#E11D48] animate-ping"
               : isOnBattery
               ? "bg-[#F59E0B] animate-pulse"
@@ -303,13 +323,17 @@ function House3D({
               : "bg-[#5277D5]"
           }`} />
           <span className="font-semibold flex items-center gap-1">
-            <span className={isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
-            <span className={`text-[9px] font-mono ${isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
+            <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
+            <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
               #{house.householdId}
             </span>
           </span>
 
-          {isBlackout ? (
+          {isLineCutActive ? (
+            <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
+              <span>✂️ LINE CUT</span>
+            </span>
+          ) : isBlackout ? (
             <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
               <span>⚡ BLACKOUT</span>
             </span>
@@ -1003,10 +1027,12 @@ function MinecraftPerimeterForest() {
 
 function MicrogridEnergyFlow({ 
   houses, 
-  activeTrade 
+  activeTrade,
+  cutLines = []
 }: { 
   houses: HouseData[]; 
   activeTrade: { from: string; to: string } | null;
+  cutLines?: number[];
 }) {
   const particlesRef = useRef<THREE.Points>(null!);
   const count = 90;
@@ -1035,11 +1061,47 @@ function MicrogridEnergyFlow({
 
   return (
     <group>
-      {/* Underground Microgrid Conduit Line */}
+      {/* Underground Microgrid Conduit Main Line */}
       <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[42, 0.1]} />
         <meshBasicMaterial color="#5277D5" />
       </mesh>
+
+      {/* House Feeder Lines & Cut Line Severed Indicators */}
+      {houses.map((h) => {
+        const isCut = cutLines.includes(h.householdId) || h.powerState === "line_cut";
+        const isNorth = h.z < 0;
+        const branchZ = isNorth ? -1.6 : 1.6;
+        const severZ = isNorth ? -2.2 : 2.2;
+
+        return (
+          <group key={`feeder-${h.id}`}>
+            {!isCut ? (
+              // Intact Feeder line connecting main conduit to house
+              <mesh position={[h.x, 0.04, branchZ]} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[0.08, 3.2]} />
+                <meshBasicMaterial color="#5277D5" opacity={0.65} transparent />
+              </mesh>
+            ) : (
+              // Severed Feeder Line with disconnected gap and glowing spark marker
+              <group>
+                <mesh position={[h.x, 0.04, isNorth ? -0.8 : 0.8]} rotation={[-Math.PI / 2, 0, 0]}>
+                  <planeGeometry args={[0.08, 1.4]} />
+                  <meshBasicMaterial color="#94A3B8" opacity={0.4} transparent />
+                </mesh>
+                {/* Severed Line Spark Beacon */}
+                <group position={[h.x, 0.12, severZ]}>
+                  <mesh>
+                    <boxGeometry args={[0.36, 0.08, 0.16]} />
+                    <meshStandardMaterial color="#DC2626" emissive="#EF4444" emissiveIntensity={1.2} />
+                  </mesh>
+                  <pointLight intensity={1.8} distance={2.8} color="#F59E0B" />
+                </group>
+              </group>
+            )}
+          </group>
+        );
+      })}
 
       {/* Energy Flow Particles */}
       <points ref={particlesRef}>
@@ -1180,21 +1242,38 @@ export default function NeighborhoodMicrogrid3D() {
     isLiveConnected, 
     lastTickTime, 
     isSocietyOutage, 
+    cutLines,
     triggerSocietyOutage, 
-    restoreSocietyGrid 
+    restoreSocietyGrid,
+    cutLinesAction,
+    restoreLinesAction
   } = useMicrogridData();
-  const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
+  const [selectedHouseIds, setSelectedHouseIds] = useState<string[]>([]);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
-  // Derive selected house from live state
-  const selectedHouse = useMemo(
-    () => houses.find((h) => h.id === selectedHouseId) || null,
-    [houses, selectedHouseId]
+  // Multi-selection handler: supports single-click, Shift+Click, Ctrl/Cmd+Click
+  const handleHouseSelect = (houseId: string, isMulti: boolean) => {
+    if (isMulti) {
+      setSelectedHouseIds((prev) =>
+        prev.includes(houseId) ? prev.filter((id) => id !== houseId) : [...prev, houseId]
+      );
+    } else {
+      setSelectedHouseIds((prev) =>
+        prev.length === 1 && prev[0] === houseId ? [] : [houseId]
+      );
+    }
+  };
+
+  // Derive selected houses and single selected house for focus
+  const selectedHouses = useMemo(
+    () => houses.filter((h) => selectedHouseIds.includes(h.id)),
+    [houses, selectedHouseIds]
   );
+  const selectedHouse = selectedHouses.length === 1 ? selectedHouses[0] : null;
 
   const handleCopyAddress = (addr: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -1301,16 +1380,17 @@ export default function NeighborhoodMicrogrid3D() {
             <House3D
               key={house.id}
               house={house}
-              isSelected={selectedHouse?.id === house.id}
+              isSelected={selectedHouseIds.includes(house.id)}
               isHovered={hoveredHouseId === house.id}
-              onSelect={() => setSelectedHouseId(house.id)}
+              isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
+              onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
               onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
             />
           ))}
         </Suspense>
 
         {/* 6. Microgrid Underground Conduit & Active Trade Energy Beam */}
-        <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} />
+        <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} cutLines={cutLines} />
 
         {/* 7. Full 360-Degree OrbitControls with strict world boundary constraints */}
         <OrbitControls 
@@ -1416,23 +1496,23 @@ export default function NeighborhoodMicrogrid3D() {
             <span>{isSocietyOutage ? "Restore Grid" : "Simulate Outage"}</span>
           </button>
 
-          {selectedHouse && (
+          {selectedHouseIds.length > 0 && (
             <button
               onClick={() => {
-                setSelectedHouseId(null);
+                setSelectedHouseIds([]);
                 setActiveTrade(null);
                 setTradeSuccess(false);
               }}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow"
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
-              <span>Reset View</span>
+              <span>Reset View ({selectedHouseIds.length})</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD (F2) ================= */}
+      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD (F2 & F4) ================= */}
       {selectedHouse && (
         <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-92 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
           
@@ -1493,8 +1573,8 @@ export default function NeighborhoodMicrogrid3D() {
               </h3>
             </div>
             <button
-              onClick={() => setSelectedHouseId(null)}
-              className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition"
+              onClick={() => setSelectedHouseIds([])}
+              className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
               title="Close panel"
             >
               <X className="w-4 h-4" />
@@ -1558,7 +1638,7 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
 
           {/* Wallet Address with Copy Feedback */}
-          <div className="text-[11px] font-mono text-[#64748B] mb-4 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-1.5 rounded-xl border border-[#E2E8F0]">
+          <div className="text-[11px] font-mono text-[#64748B] mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-1.5 rounded-xl border border-[#E2E8F0]">
             <span>Wallet Node:</span>
             <div className="flex items-center gap-1.5">
               <span className="text-[#1E293B] font-semibold truncate max-w-[170px]" title={selectedHouse.walletAddress}>
@@ -1574,6 +1654,34 @@ export default function NeighborhoodMicrogrid3D() {
                 {copiedAddress ? <Check className="w-3.5 h-3.5 text-[#16A34A]" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
+          </div>
+
+          {/* Line Isolation Status & Line Cut Control (F4) */}
+          <div className="text-[11px] font-mono mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-2 rounded-xl border border-[#E2E8F0]">
+            <div className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "bg-[#D97706] animate-pulse" : "bg-[#16A34A]"}`} />
+              <span className="text-[#64748B]">Line Connection:</span>
+              <span className={`font-semibold ${cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "text-[#D97706]" : "text-[#16A34A]"}`}>
+                {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "Severed" : "Active (33kV)"}
+              </span>
+            </div>
+            {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? (
+              <button
+                onClick={() => restoreLinesAction([selectedHouse.householdId])}
+                className="px-2 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
+                title="Reconnect utility line"
+              >
+                <span>🔌 Reconnect</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => cutLinesAction([selectedHouse.householdId])}
+                className="px-2 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
+                title="Simulate blown line / isolate house"
+              >
+                <span>✂️ Cut Line</span>
+              </button>
+            )}
           </div>
 
           {/* Context-Aware Action Triggers (F2 - Replaces misleading "Trade surplus energy" button) */}
@@ -1617,15 +1725,58 @@ export default function NeighborhoodMicrogrid3D() {
         </div>
       )}
 
+      {/* ================= BATCH MULTI-SELECT LINE CONTROL DOCK (M3) ================= */}
+      {selectedHouses.length > 1 && (
+        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-96 bg-white/95 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.12)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
+          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#5277D5] animate-pulse" />
+              <span className="text-xs font-mono font-bold text-[#1E293B]">
+                {selectedHouses.length} Nodes Selected
+              </span>
+              <span className="text-[10px] font-mono text-[#64748B]">
+                ({selectedHouses.map((h) => h.id).join(", ")})
+              </span>
+            </div>
+            <button
+              onClick={() => setSelectedHouseIds([])}
+              className="text-[#64748B] hover:text-[#1E293B] p-1 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+              title="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <p className="text-xs text-[#64748B] mb-3.5 leading-relaxed font-sans">
+            Batch microgrid isolation: Cut power lines to simulate blown line dropouts, or reconnect them to the main 33kV distribution feeder.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2.5 font-mono">
+            <button
+              onClick={() => cutLinesAction(selectedHouses.map((h) => h.householdId))}
+              className="py-2.5 px-3 rounded-xl bg-[#DC2626]/10 hover:bg-[#DC2626]/20 border border-[#DC2626]/30 text-[#DC2626] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
+            >
+              <span>✂️ Cut Lines ({selectedHouses.length})</span>
+            </button>
+            <button
+              onClick={() => restoreLinesAction(selectedHouses.map((h) => h.householdId))}
+              className="py-2.5 px-3 rounded-xl bg-[#16A34A]/10 hover:bg-[#16A34A]/20 border border-[#16A34A]/30 text-[#16A34A] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
+            >
+              <span>🔌 Restore Lines</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ================= BOTTOM INTERACTION HELPER ================= */}
       <div className="absolute bottom-5 right-6 z-20 hidden md:flex items-center gap-3 px-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#CBD5E1] text-[11px] font-mono text-[#64748B] shadow-sm pointer-events-none">
         <span>Orbit: 360° Drag</span>
         <span className="text-[#CBD5E1]">•</span>
-        <span>Zoom: Scroll (Bounded)</span>
+        <span>Zoom: Scroll</span>
         <span className="text-[#CBD5E1]">•</span>
-        <span>Pan: Right-Click (Clamped)</span>
+        <span>Shift/Ctrl+Click: Multi-Select</span>
         <span className="text-[#CBD5E1]">•</span>
-        <span className="text-[#0284C7] font-semibold">Click House to Inspect</span>
+        <span className="text-[#0284C7] font-semibold">Click: Inspect &amp; Cut Line</span>
       </div>
 
     </div>
