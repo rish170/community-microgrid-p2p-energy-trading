@@ -332,15 +332,18 @@ export function useMicrogridData() {
     }
   }, []);
 
-  // Restore Society-Wide Grid
+  // Restore Society-Wide Grid (returns houses to grid, preserving C6 initial blackout)
   const restoreSocietyGrid = useCallback(async () => {
     setIsSocietyOutage(false);
     setHouses((prev) =>
-      prev.map((h) => ({
-        ...h,
-        powerState: "grid",
-        isOutage: false,
-      }))
+      prev.map((h) => {
+        const isC6 = h.householdId === 141;
+        return {
+          ...h,
+          powerState: isC6 ? "blackout" : "grid",
+          isOutage: isC6,
+        };
+      })
     );
 
     try {
@@ -354,6 +357,40 @@ export function useMicrogridData() {
           .update({ ended_at: new Date().toISOString() })
           .eq("scope", "society")
           .is("ended_at", null);
+      }
+    }
+  }, []);
+
+  // Reset Entire Microgrid to initial baseline state (clears orders, resets C6 to blackout, resets battery reserves)
+  const resetMicrogridAction = useCallback(async () => {
+    setIsSocietyOutage(false);
+    setCutLines([]);
+    setEnergyRequests([]);
+    setHouses((prev) =>
+      prev.map((h) => {
+        const isC6 = h.householdId === 141;
+        const isSolar = h.type === "prosumer";
+        return {
+          ...h,
+          powerState: isC6 ? "blackout" : "grid",
+          isOutage: isC6,
+          batteryKwh: isSolar ? 4.5 : 0.0,
+          batteryCapacityKwh: isSolar ? 6.0 : 0.0,
+          isSuppliedByTrade: false,
+        };
+      })
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/grid/reset`, { method: "POST" });
+    } catch (err) {
+      console.warn("[EnergyOS] Backend offline on grid reset:", err);
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        await supabase
+          .from("energy_requests")
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000");
       }
     }
   }, []);
@@ -782,6 +819,13 @@ export function useMicrogridData() {
             setEnergyRequests((prev) =>
               prev.map((r) => (r.id === row.id ? row : r))
             );
+          } else if (payload.eventType === "DELETE") {
+            const oldRow = payload.old as { id?: string };
+            if (oldRow && oldRow.id) {
+              setEnergyRequests((prev) => prev.filter((r) => r.id !== oldRow.id));
+            } else {
+              setEnergyRequests([]);
+            }
           }
         }
       )
@@ -813,6 +857,7 @@ export function useMicrogridData() {
     fetchEnergyRequests,
     triggerSocietyOutage,
     restoreSocietyGrid,
+    resetMicrogridAction,
     cutLinesAction,
     restoreLinesAction,
     refetch: fetchLatestTelemetry,

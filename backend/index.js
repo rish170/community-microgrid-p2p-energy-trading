@@ -470,6 +470,72 @@ app.post("/api/outage/restore", async (req, res) => {
   });
 });
 
+// POST /api/grid/reset (Reset grid state, clear all energy requests, and restore initial C6 blackout)
+app.post("/api/grid/reset", async (req, res) => {
+  const now = new Date().toISOString();
+  inMemoryGridState.isSocietyOutage = false;
+  inMemoryGridState.activeOutageEvent = null;
+  inMemoryGridState.cutLines.clear();
+
+  // Reset all 12 houses to pristine initial state (solar: 4.5 kWh / grid, consumers: grid, C6: blackout)
+  for (const id of ALL_HOUSE_IDS) {
+    const isSolar = SOLAR_HOUSE_IDS.includes(id);
+    const isMockBlackout = id === 141; // C6 starts in blackout as baseline
+    inMemoryGridState.houseStatus.set(id, {
+      household_id: id,
+      power_state: isMockBlackout ? "blackout" : "grid",
+      battery_kwh: isSolar ? 4.5 : 0.0,
+      battery_capacity_kwh: isSolar ? 6.0 : 0.0,
+      is_supplied_by_trade: false,
+      updated_at: now
+    });
+  }
+
+  // Clear all pending, pinged, or settled requests and their timers
+  for (const reqObj of inMemoryRequests.values()) {
+    if (reqObj.pingTimer) clearTimeout(reqObj.pingTimer);
+    if (reqObj.autoAcceptTimer) clearTimeout(reqObj.autoAcceptTimer);
+  }
+  inMemoryRequests.clear();
+
+  if (supabase) {
+    try {
+      // 1. Close all active grid events
+      await supabase
+        .from("grid_events")
+        .update({ ended_at: now })
+        .is("ended_at", null);
+
+      // 2. Reset house_status rows
+      const updates = Array.from(inMemoryGridState.houseStatus.values());
+      for (const u of updates) {
+        await supabase
+          .from("house_status")
+          .upsert(u, { onConflict: "household_id" });
+      }
+
+      // 3. Clear energy requests table
+      await supabase
+        .from("energy_requests")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+    } catch (err) {
+      console.warn("[Backend] Supabase reset error:", err.message);
+    }
+  }
+
+  console.log(`[Backend Grid Engine] Entire grid RESET to initial state at ${now}. C6 returned to blackout, requests cleared.`);
+
+  res.json({
+    success: true,
+    message: "Grid reset to initial baseline: requests cleared, C6 in blackout, other houses on grid.",
+    isSocietyOutage: false,
+    cutLines: [],
+    requestsCount: 0,
+    houseStatus: Array.from(inMemoryGridState.houseStatus.values())
+  });
+});
+
 // POST Cut Individual House Lines (Isolates selected houses from distribution grid)
 app.post("/api/lines/cut", async (req, res) => {
   const { household_ids = [], household_id } = req.body;
@@ -1023,6 +1089,28 @@ app.get("/api/requests", async (req, res) => {
 
   res.json({ success: true, count: list.length, requests: list });
 });
+
+// DELETE or POST /api/requests/clear (Clear all energy requests)
+const handleClearRequests = async (req, res) => {
+  for (const reqObj of inMemoryRequests.values()) {
+    if (reqObj.pingTimer) clearTimeout(reqObj.pingTimer);
+    if (reqObj.autoAcceptTimer) clearTimeout(reqObj.autoAcceptTimer);
+  }
+  inMemoryRequests.clear();
+  if (supabase) {
+    try {
+      await supabase
+        .from("energy_requests")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+    } catch (err) {
+      console.warn("[Backend] Supabase clear requests error:", err.message);
+    }
+  }
+  res.json({ success: true, message: "All energy requests cleared", count: 0 });
+};
+app.delete("/api/requests", handleClearRequests);
+app.post("/api/requests/clear", handleClearRequests);
 
 // POST /api/requests (Create new energy request & trigger nearest-prosumer matching)
 app.post("/api/requests", async (req, res) => {

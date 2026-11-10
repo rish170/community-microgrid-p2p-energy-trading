@@ -1250,6 +1250,7 @@ export default function NeighborhoodMicrogrid3D() {
     respondEnergyRequestAction,
     triggerSocietyOutage, 
     restoreSocietyGrid,
+    resetMicrogridAction,
     cutLinesAction,
     restoreLinesAction
   } = useMicrogridData();
@@ -1359,19 +1360,34 @@ export default function NeighborhoodMicrogrid3D() {
   // Trigger 3D Energy Beam animation whenever a request is settling or settled (M5)
   const lastSettledIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (energyRequests.length === 0) {
+      setActiveTrade(null);
+      lastSettledIdRef.current = null;
+      return;
+    }
     const latestSettled = energyRequests.find(
       (r) => (r.status === "settled" || r.status === "settling") && r.current_candidate_household_id
     );
-    if (latestSettled && latestSettled.id !== lastSettledIdRef.current) {
+    if (!latestSettled) {
+      setActiveTrade(null);
+      return;
+    }
+    if (latestSettled.id !== lastSettledIdRef.current) {
       lastSettledIdRef.current = latestSettled.id;
-      const seller = houses.find((h) => h.householdId === latestSettled.current_candidate_household_id);
-      const buyer = houses.find((h) => h.householdId === latestSettled.requester_household_id);
-      if (seller && buyer) {
-        setActiveTrade({ from: seller.id, to: buyer.id });
-        const timer = setTimeout(() => {
-          setActiveTrade(null);
-        }, 7000);
-        return () => clearTimeout(timer);
+      // Only animate if settled within the last 15 seconds
+      const settledAgeMs = latestSettled.updated_at 
+        ? Math.abs(Date.now() - new Date(latestSettled.updated_at).getTime())
+        : 0;
+      if (settledAgeMs < 15000) {
+        const seller = houses.find((h) => h.householdId === latestSettled.current_candidate_household_id);
+        const buyer = houses.find((h) => h.householdId === latestSettled.requester_household_id);
+        if (seller && buyer) {
+          setActiveTrade({ from: seller.id, to: buyer.id });
+          const timer = setTimeout(() => {
+            setActiveTrade(null);
+          }, 7000);
+          return () => clearTimeout(timer);
+        }
       }
     }
   }, [energyRequests, houses]);
@@ -1423,6 +1439,10 @@ export default function NeighborhoodMicrogrid3D() {
     setTimeout(() => {
       setTradeSuccess(true);
     }, 2200);
+
+    setTimeout(() => {
+      setActiveTrade(null);
+    }, 6000);
   };
 
   return (
@@ -1609,6 +1629,21 @@ export default function NeighborhoodMicrogrid3D() {
           >
             <AlertTriangle className="w-3.5 h-3.5" />
             <span>{isSocietyOutage ? "Restore Grid" : "Simulate Outage"}</span>
+          </button>
+
+          {/* Reset Entire Grid & Orders Button */}
+          <button
+            onClick={() => {
+              resetMicrogridAction();
+              setActiveTrade(null);
+              setSelectedHouseIds([]);
+              setTradeSuccess(false);
+            }}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#475569] hover:text-[#0F172A] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98]"
+            title="Reset microgrid: clear all requests and orders, return C6 to blackout baseline, restore battery reserves"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
+            <span>Reset Grid</span>
           </button>
 
           {selectedHouseIds.length > 0 && (
