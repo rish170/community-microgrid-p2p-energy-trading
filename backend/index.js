@@ -26,6 +26,52 @@ try {
   provider = new ethers.JsonRpcProvider(SEPOLIA_RPCS[1]);
 }
 
+// Supabase Service Role Client
+const { createClient } = require("@supabase/supabase-js");
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let supabase = null;
+
+if (supabaseUrl && supabaseServiceKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
+    console.log("[Backend] Supabase service role client initialized successfully.");
+  } catch (err) {
+    console.warn("[Backend] Failed to initialize Supabase client:", err.message);
+  }
+} else {
+  console.warn("[Backend] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. In-memory state will be used as fallback.");
+}
+
+// 12 Live Microgrid Households (Ausgrid dataset IDs)
+const SOLAR_HOUSE_IDS = [282, 33, 212, 55, 244, 112];
+const CONSUMER_HOUSE_IDS = [18, 26, 48, 90, 117, 141];
+const ALL_HOUSE_IDS = [...SOLAR_HOUSE_IDS, ...CONSUMER_HOUSE_IDS];
+
+// In-Memory Authoritative State Fallback (synchronizes with Supabase house_status & grid_events)
+const inMemoryGridState = {
+  isSocietyOutage: false,
+  activeOutageEvent: null,
+  cutLines: new Set(),
+  houseStatus: new Map(
+    ALL_HOUSE_IDS.map((id) => {
+      const isSolar = SOLAR_HOUSE_IDS.includes(id);
+      const isMockBlackout = id === 141; // C6 starts in blackout as demonstrated in simulation
+      return [
+        id,
+        {
+          household_id: id,
+          power_state: isMockBlackout ? "blackout" : "grid",
+          battery_kwh: isSolar ? 4.5 : 0.0,
+          battery_capacity_kwh: isSolar ? 6.0 : 0.0,
+          is_supplied_by_trade: false,
+          updated_at: new Date().toISOString()
+        }
+      ];
+    })
+  )
+};
+
 // In-memory trade database
 let tradesDatabase = [
   {
@@ -259,6 +305,207 @@ app.get("/api/microgrid/dataset-readings", (req, res) => {
       communitySelfSufficiencyPct: Number(((totalGeneration / totalConsumption) * 100).toFixed(1))
     },
     households: datasetHouseholds
+  });
+});
+
+// GET Microgrid Status (Society Outage & House States)
+app.get("/api/status", async (req, res) => {
+  let isSocietyOutage = inMemoryGridState.isSocietyOutage;
+  let activeOutageEvent = inMemoryGridState.activeOutageEvent;
+  let houses = Array.from(inMemoryGridState.houseStatus.values());
+
+  if (supabase) {
+    try {
+      const { data: eventData } = await supabase
+        .from("grid_events")
+        .select("*")
+        .eq("scope", "society")
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1);
+
+      if (eventData && eventData.length > 0) {
+        isSocietyOutage = true;
+        activeOutageEvent = eventData[0];
+      } else {
+        isSocietyOutage = false;
+        activeOutageEvent = null;
+      }
+
+      const { data: statusData } = await supabase
+        .from("house_status")
+        .select("*")
+        .in("household_id", ALL_HOUSE_IDS);
+
+      if (statusData && statusData.length > 0) {
+        houses = statusData;
+        // Sync in-memory map
+        for (const row of statusData) {
+          inMemoryGridState.houseStatus.set(row.household_id, row);
+        }
+      }
+    } catch (err) {
+      console.warn("[Backend] Error querying Supabase status, using fallback:", err.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    isSocietyOutage,
+    activeOutageEvent,
+    houses
+  });
+});
+
+// POST Trigger Society-Wide Grid Outage
+app.post("/api/outage", async (req, res) => {
+  inMemoryGridState.isSocietyOutage = true;
+  const startedAt = new Date().toISOString();
+  inMemoryGridState.activeOutageEvent = {
+    scope: "society",
+    event_type: "outage",
+    started_at: startedAt
+  };
+
+  // Update in-memory statuses:
+  // Non-solar houses enter Blackout; solar houses switch to On Battery (or Blackout if empty)
+  for (const [id, house] of inMemoryGridState.houseStatus.entries()) {
+    const isSolar = SOLAR_HOUSE_IDS.includes(id);
+    if (!isSolar) {
+      house.power_state = house.is_supplied_by_trade ? "battery" : "blackout";
+    } else {
+      house.power_state = house.battery_kwh > 0 ? "battery" : "blackout";
+    }
+    house.updated_at = startedAt;
+  }
+
+  if (supabase) {
+    try {
+      // 1. Insert outage event
+      await supabase.from("grid_events").insert({
+        scope: "society",
+        event_type: "outage",
+        started_at: startedAt
+      });
+
+      // 2. Update house statuses
+      const updates = Array.from(inMemoryGridState.houseStatus.values());
+      for (const u of updates) {
+        await supabase
+          .from("house_status")
+          .upsert(u, { onConflict: "household_id" });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase outage update error:", err.message);
+    }
+  }
+
+  console.log(`[Backend Grid Engine] Society Outage TRIGGERED at ${startedAt}`);
+
+  res.json({
+    success: true,
+    message: "Society-wide grid outage triggered. Non-solar houses in Blackout, solar houses on Battery.",
+    isSocietyOutage: true,
+    started_at: startedAt
+  });
+});
+
+// POST Restore Society-Wide Grid
+app.post("/api/outage/restore", async (req, res) => {
+  inMemoryGridState.isSocietyOutage = false;
+  inMemoryGridState.activeOutageEvent = null;
+  const endedAt = new Date().toISOString();
+
+  // Reset all houses to nominal grid supply
+  for (const [id, house] of inMemoryGridState.houseStatus.entries()) {
+    house.power_state = "grid";
+    house.is_supplied_by_trade = false;
+    house.updated_at = endedAt;
+  }
+
+  if (supabase) {
+    try {
+      // 1. Close active society outage events
+      await supabase
+        .from("grid_events")
+        .update({ ended_at: endedAt })
+        .eq("scope", "society")
+        .is("ended_at", null);
+
+      // 2. Restore house statuses
+      const updates = Array.from(inMemoryGridState.houseStatus.values());
+      for (const u of updates) {
+        await supabase
+          .from("house_status")
+          .upsert(u, { onConflict: "household_id" });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase restore update error:", err.message);
+    }
+  }
+
+  console.log(`[Backend Grid Engine] Society Grid RESTORED at ${endedAt}`);
+
+  res.json({
+    success: true,
+    message: "Society grid supply restored. All houses connected to nominal utility grid.",
+    isSocietyOutage: false,
+    ended_at: endedAt
+  });
+});
+
+// POST Tick Sync (Battery physics: charges on solar surplus, drains on load during outage/night)
+app.post("/api/tick-sync", async (req, res) => {
+  const { readings = [] } = req.body;
+  const isOutage = inMemoryGridState.isSocietyOutage;
+
+  for (const r of readings) {
+    const householdId = Number(r.household_id);
+    if (!SOLAR_HOUSE_IDS.includes(householdId)) continue;
+
+    const house = inMemoryGridState.houseStatus.get(householdId);
+    if (!house) continue;
+
+    const solarGen = Number(r.gg_kwh || 0);
+    const homeLoad = Number(r.gc_kwh || 0) + Number(r.cl_kwh || 0);
+    const net = solarGen - homeLoad;
+
+    if (net > 0) {
+      // Surplus solar charges battery up to 6.0 kWh capacity
+      house.battery_kwh = Math.min(
+        house.battery_capacity_kwh,
+        Number((house.battery_kwh + net).toFixed(2))
+      );
+    } else if (isOutage) {
+      // During outage, deficit drains battery
+      house.battery_kwh = Math.max(
+        0,
+        Number((house.battery_kwh + net).toFixed(2))
+      );
+      if (house.battery_kwh <= 0 && solarGen < homeLoad) {
+        house.power_state = "blackout";
+      }
+    }
+    house.updated_at = new Date().toISOString();
+  }
+
+  if (supabase) {
+    try {
+      const updates = Array.from(inMemoryGridState.houseStatus.values()).filter((h) =>
+        SOLAR_HOUSE_IDS.includes(h.household_id)
+      );
+      for (const u of updates) {
+        await supabase.from("house_status").upsert(u, { onConflict: "household_id" });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase tick battery sync error:", err.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    message: "Battery levels synced with tick telemetry",
+    houseStatus: Array.from(inMemoryGridState.houseStatus.values())
   });
 });
 

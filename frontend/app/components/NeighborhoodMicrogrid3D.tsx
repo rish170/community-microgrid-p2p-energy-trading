@@ -83,7 +83,7 @@ function SolarPanelModule({ width = 0.45, length = 0.65 }: { width?: number; len
 }
 
 // Rooftop Solar PV Installation Mounted Directly on house.glb Roof Slope
-function HouseRooftopSolar({ isSelected }: { isSelected: boolean }) {
+function HouseRooftopSolar({ isSelected, isBlackout = false }: { isSelected: boolean; isBlackout?: boolean }) {
   return (
     <group position={[0, 0, 0]}>
       {/* Front / Primary Roof Slope (pitch sloping +X, rotZ ~ -60deg) */}
@@ -118,13 +118,15 @@ function HouseRooftopSolar({ isSelected }: { isSelected: boolean }) {
         </group>
       </group>
 
-      {/* Solar Generation Active Glow Indicator */}
-      <pointLight 
-        position={[-0.8, 2.2, 0]} 
-        intensity={isSelected ? 2.0 : 1.0} 
-        distance={3.5} 
-        color="#D99A22" 
-      />
+      {/* Solar Generation Active Glow Indicator (Off during blackout) */}
+      {!isBlackout && (
+        <pointLight 
+          position={[-0.8, 2.2, 0]} 
+          intensity={isSelected ? 2.0 : 1.0} 
+          distance={3.5} 
+          color="#D99A22" 
+        />
+      )}
     </group>
   );
 }
@@ -145,18 +147,64 @@ function House3D({
 }) {
   const { scene } = useGLTF("/models/house.glb");
   const isProsumer = house.type === "prosumer";
+  const isBlackout = house.powerState === "blackout" || house.isOutage;
+  const isOnBattery = house.powerState === "battery";
 
-  // Deep clone GLTF scene hierarchy for each of the 12 independent house instances
+  // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
     const c = scene.clone(true);
     c.traverse((node) => {
       if ((node as THREE.Mesh).isMesh) {
-        node.castShadow = true;
-        node.receiveShadow = true;
+        const mesh = node as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((m) => m.clone());
+        } else if (mesh.material) {
+          mesh.material = mesh.material.clone();
+        }
       }
     });
     return c;
   }, [scene]);
+
+  // Dynamically update materials when house enters or exits blackout
+  useEffect(() => {
+    clonedScene.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mesh = node as THREE.Mesh;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((mat) => {
+          if (!mat) return;
+          const stdMat = mat as THREE.MeshStandardMaterial;
+          if (isBlackout) {
+            if (!stdMat.userData.originalColor) {
+              stdMat.userData.originalColor = stdMat.color.clone();
+              stdMat.userData.originalEmissive = stdMat.emissive ? stdMat.emissive.clone() : new THREE.Color(0, 0, 0);
+              stdMat.userData.originalEmissiveIntensity = stdMat.emissiveIntensity || 0;
+            }
+            if (stdMat.name === "window") {
+              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout
+              if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
+              stdMat.emissiveIntensity = 0;
+              stdMat.roughness = 0.95;
+            } else {
+              // Dim walls, roof, doors
+              stdMat.color.copy(stdMat.userData.originalColor).multiplyScalar(0.42);
+              if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
+              stdMat.emissiveIntensity = 0;
+            }
+          } else if (stdMat.userData.originalColor) {
+            stdMat.color.copy(stdMat.userData.originalColor);
+            if (stdMat.emissive && stdMat.userData.originalEmissive) {
+              stdMat.emissive.copy(stdMat.userData.originalEmissive);
+              stdMat.emissiveIntensity = stdMat.userData.originalEmissiveIntensity;
+            }
+          }
+        });
+      }
+    });
+  }, [clonedScene, isBlackout]);
 
   // House scaling & base alignment
   const scale = 0.28;
@@ -183,7 +231,10 @@ function House3D({
       {/* Voxel Cobblestone Foundation Pad */}
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
-        <meshStandardMaterial color="#B0B2BA" roughness={0.8} />
+        <meshStandardMaterial 
+          color={isBlackout ? "#332228" : "#B0B2BA"} 
+          roughness={0.8} 
+        />
       </mesh>
 
       {/* house.glb 3D Model Asset */}
@@ -194,7 +245,27 @@ function House3D({
       {/* PROSUMERS (P1 to P6): Rooftop Solar PV Installation */}
       {/* CONSUMERS (C1 to C6): Standard clean roof */}
       {isProsumer && (
-        <HouseRooftopSolar isSelected={isSelected} />
+        <HouseRooftopSolar isSelected={isSelected} isBlackout={isBlackout} />
+      )}
+
+      {/* Blackout Emergency Beacon */}
+      {isBlackout && (
+        <pointLight 
+          position={[0, 0.7, 0]} 
+          intensity={0.8} 
+          distance={2.8} 
+          color="#E11D48" 
+        />
+      )}
+
+      {/* Islanded Prosumer Battery Glow */}
+      {isOnBattery && (
+        <pointLight 
+          position={[0, 1.4, 0]} 
+          intensity={1.2} 
+          distance={3.2} 
+          color="#F59E0B" 
+        />
       )}
 
       {/* Selection / Hover Glow Ring */}
@@ -202,7 +273,7 @@ function House3D({
         <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[1.75, 2.15, 32]} />
           <meshBasicMaterial 
-            color={isSelected ? "#5277D5" : isProsumer ? "#D99A22" : "#D94F58"} 
+            color={isBlackout ? "#E11D48" : isOnBattery ? "#F59E0B" : isSelected ? "#5277D5" : isProsumer ? "#D99A22" : "#D94F58"} 
             transparent 
             opacity={0.9} 
           />
@@ -214,30 +285,49 @@ function House3D({
         <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
           isSelected 
             ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
+            : isBlackout
+            ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
+            : isOnBattery
+            ? "bg-[#1A1404]/95 text-[#FEF08A] border border-[#F59E0B]/60 shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
             : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
         }`}>
-          <span className={`w-2 h-2 rounded-full ${
-            isSelected 
+          <span className={`w-2.5 h-2.5 rounded-full ${
+            isBlackout
+              ? "bg-[#E11D48] animate-ping"
+              : isOnBattery
+              ? "bg-[#F59E0B] animate-pulse"
+              : isSelected 
               ? "bg-[#5277D5]" 
               : isProsumer 
               ? "bg-[#D99A22]" 
               : "bg-[#5277D5]"
           }`} />
           <span className="font-semibold flex items-center gap-1">
-            <span>{house.id}</span>
-            <span className={`text-[9px] font-mono ${isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
+            <span className={isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
+            <span className={`text-[9px] font-mono ${isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
               #{house.householdId}
             </span>
           </span>
-          <span className={`font-mono text-[10px] ${
-            isSelected 
-              ? "text-zinc-300"
-              : house.surplusKwh >= 0 
-              ? "text-[#27845B]" 
-              : "text-[#D94F58]"
-          }`}>
-            {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
-          </span>
+
+          {isBlackout ? (
+            <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
+              <span>⚡ BLACKOUT</span>
+            </span>
+          ) : isOnBattery ? (
+            <span className="font-mono text-[10px] text-[#FDE047] font-semibold flex items-center gap-0.5">
+              <span>🔋 {house.batteryKwh.toFixed(1)} kWh</span>
+            </span>
+          ) : (
+            <span className={`font-mono text-[10px] ${
+              isSelected 
+                ? "text-zinc-300"
+                : house.surplusKwh >= 0 
+                ? "text-[#27845B]" 
+                : "text-[#D94F58]"
+            }`}>
+              {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
+            </span>
+          )}
         </div>
       </Html>
     </group>
@@ -474,7 +564,13 @@ function MinecraftVoxelTerrain() {
 // ROAD, SIDEWALKS, PARCELS & STREET LIGHTS
 // =========================================================================
 
-function MinecraftRoadAndParcels() {
+function MinecraftRoadAndParcels({ 
+  houses = HOUSES_CONFIG as unknown as HouseData[], 
+  isSocietyOutage = false 
+}: { 
+  houses?: HouseData[]; 
+  isSocietyOutage?: boolean;
+}) {
   return (
     <group>
       {/* Center Asphalt Road (Finite: x in [-23.5, 23.5], z in [-1.8, 1.8]) */}
@@ -524,7 +620,7 @@ function MinecraftRoadAndParcels() {
       </mesh>
 
       {/* 12 Individual Cobblestone Parcel Walkways from Sidewalk to Front Porch */}
-      {NEIGHBORHOOD_HOUSES.map((house) => {
+      {houses.map((house) => {
         const isNorth = house.z < 0;
         const walkZ = isNorth ? -3.65 : 3.65;
         return (
@@ -570,17 +666,22 @@ function MinecraftRoadAndParcels() {
               <boxGeometry args={[0.1, 0.1, 0.35]} />
               <meshStandardMaterial color="#334155" />
             </mesh>
-            {/* Glowstone Lantern Cube */}
+            {/* Glowstone Lantern Cube (Off during society outage) */}
             <mesh position={[0, 2.05, 0.28]}>
               <boxGeometry args={[0.3, 0.34, 0.3]} />
               <meshStandardMaterial 
-                color="#FDE047" 
-                emissive="#FACC15" 
-                emissiveIntensity={1.6} 
-                roughness={0.2} 
+                color={isSocietyOutage ? "#334155" : "#FDE047"} 
+                emissive={isSocietyOutage ? "#000000" : "#FACC15"} 
+                emissiveIntensity={isSocietyOutage ? 0 : 1.6} 
+                roughness={isSocietyOutage ? 0.9 : 0.2} 
               />
             </mesh>
-            <pointLight position={[0, 1.9, 0.3]} intensity={1.1} distance={6.0} color="#FEF08A" />
+            <pointLight 
+              position={[0, 1.9, 0.3]} 
+              intensity={isSocietyOutage ? 0 : 1.1} 
+              distance={6.0} 
+              color="#FEF08A" 
+            />
           </group>
 
           {/* South Lamp */}
@@ -593,23 +694,28 @@ function MinecraftRoadAndParcels() {
               <boxGeometry args={[0.1, 0.1, 0.35]} />
               <meshStandardMaterial color="#334155" />
             </mesh>
-            {/* Glowstone Lantern Cube */}
+            {/* Glowstone Lantern Cube (Off during society outage) */}
             <mesh position={[0, 2.05, -0.28]}>
               <boxGeometry args={[0.3, 0.34, 0.3]} />
               <meshStandardMaterial 
-                color="#FDE047" 
-                emissive="#FACC15" 
-                emissiveIntensity={1.6} 
-                roughness={0.2} 
+                color={isSocietyOutage ? "#334155" : "#FDE047"} 
+                emissive={isSocietyOutage ? "#000000" : "#FACC15"} 
+                emissiveIntensity={isSocietyOutage ? 0 : 1.6} 
+                roughness={isSocietyOutage ? 0.9 : 0.2} 
               />
             </mesh>
-            <pointLight position={[0, 1.9, -0.3]} intensity={1.1} distance={6.0} color="#FEF08A" />
+            <pointLight 
+              position={[0, 1.9, -0.3]} 
+              intensity={isSocietyOutage ? 0 : 1.1} 
+              distance={6.0} 
+              color="#FEF08A" 
+            />
           </group>
         </group>
       ))}
 
       {/* Green Smart-Meter / Distribution Utility Boxes at Plot Entrances */}
-      {NEIGHBORHOOD_HOUSES.map((h) => (
+      {houses.map((h) => (
         <group key={`util-${h.id}`} position={[h.x - 1.1, 0, h.z < 0 ? -2.7 : 2.7]}>
           <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
             <boxGeometry args={[0.42, 0.56, 0.42]} />
@@ -618,7 +724,15 @@ function MinecraftRoadAndParcels() {
           {/* Status Telemetry LED */}
           <mesh position={[0, 0.44, h.z < 0 ? 0.22 : -0.22]}>
             <boxGeometry args={[0.1, 0.05, 0.02]} />
-            <meshBasicMaterial color={h.isOutage ? "#EF4444" : "#22C55E"} />
+            <meshBasicMaterial 
+              color={
+                h.powerState === "blackout" || h.isOutage 
+                  ? "#EF4444" 
+                  : h.powerState === "battery" 
+                  ? "#F59E0B" 
+                  : "#22C55E"
+              } 
+            />
           </mesh>
         </group>
       ))}
@@ -1061,7 +1175,14 @@ function CameraController({
 // =========================================================================
 
 export default function NeighborhoodMicrogrid3D() {
-  const { houses, isLiveConnected, lastTickTime } = useMicrogridData();
+  const { 
+    houses, 
+    isLiveConnected, 
+    lastTickTime, 
+    isSocietyOutage, 
+    triggerSocietyOutage, 
+    restoreSocietyGrid 
+  } = useMicrogridData();
   const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
@@ -1137,13 +1258,13 @@ export default function NeighborhoodMicrogrid3D() {
         <color attach="background" args={["#DCEAF6"]} />
         <fog attach="fog" args={["#DCEAF6", 30, 58]} />
 
-        {/* Realistic Sun & Ambient Lighting */}
-        <ambientLight intensity={1.6} color="#ffffff" />
-        <hemisphereLight args={["#E0F2FE", "#5B8C3E", 1.2]} />
+        {/* Realistic Sun & Ambient Lighting (Dims dynamically during society outage) */}
+        <ambientLight intensity={isSocietyOutage ? 0.7 : 1.6} color={isSocietyOutage ? "#cbd5e1" : "#ffffff"} />
+        <hemisphereLight args={["#E0F2FE", "#5B8C3E", isSocietyOutage ? 0.6 : 1.2]} />
         <directionalLight 
           position={[20, 30, 18]} 
-          intensity={2.4} 
-          color="#FFFDF5" 
+          intensity={isSocietyOutage ? 1.0 : 2.4} 
+          color={isSocietyOutage ? "#f1f5f9" : "#FFFDF5"} 
           castShadow 
           shadow-mapSize={2048}
           shadow-camera-near={0.5}
@@ -1155,7 +1276,7 @@ export default function NeighborhoodMicrogrid3D() {
         />
         <directionalLight 
           position={[-18, 16, -18]} 
-          intensity={0.8} 
+          intensity={isSocietyOutage ? 0.3 : 0.8} 
           color="#BAE6FD" 
         />
 
@@ -1166,7 +1287,7 @@ export default function NeighborhoodMicrogrid3D() {
         <MinecraftVoxelTerrain />
 
         {/* 2. Road, Sidewalks, Household Parcels, Walkways & Street Lamps */}
-        <MinecraftRoadAndParcels />
+        <MinecraftRoadAndParcels houses={houses} isSocietyOutage={isSocietyOutage} />
 
         {/* 3. Surrounding Microgrid Community Infrastructure (BESS Substation & Solar Carport) */}
         <MicrogridCommunityInfrastructure />
@@ -1208,8 +1329,34 @@ export default function NeighborhoodMicrogrid3D() {
         />
       </Canvas>
 
+      {/* ================= ACTIVE SOCIETY OUTAGE EMERGENCY BANNER (M2) ================= */}
+      {isSocietyOutage && (
+        <div className="absolute top-0 left-0 right-0 z-30 bg-gradient-to-r from-[#991B1B] via-[#DC2626] to-[#991B1B] text-white px-4 sm:px-6 py-2 shadow-lg flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300 font-sans">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-wider bg-black/30 px-2 py-0.5 rounded">
+                ⚠️ SOCIETY GRID OUTAGE ACTIVE
+              </span>
+              <span className="text-xs text-red-100 hidden sm:inline">
+                Utility 33kV feed offline. 6 Non-solar houses in Blackout, 6 solar prosumers islanded on BESS.
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={restoreSocietyGrid}
+              className="px-3 py-1 bg-white hover:bg-zinc-100 text-[#991B1B] font-mono text-xs font-bold rounded-lg shadow-sm transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restore Utility Grid</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ================= TOP COMMUNITY TELEMETRY HUD BAR ================= */}
-      <div className="absolute top-5 left-4 right-4 sm:left-6 sm:right-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pointer-events-none z-20">
+      <div className={`absolute ${isSocietyOutage ? "top-14" : "top-5"} left-4 right-4 sm:left-6 sm:right-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pointer-events-none z-20 transition-all duration-300`}>
         <div className="pointer-events-auto bg-white/85 backdrop-blur-xl border border-[#CBD5E1] p-3 sm:px-5 sm:py-2.5 rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.06)] flex flex-wrap items-center gap-3 sm:gap-6">
           <div>
             <div className="text-[10px] font-mono tracking-wider text-[#64748B] uppercase">
@@ -1253,19 +1400,36 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
         </div>
 
-        {selectedHouse && (
+        {/* Action Controls */}
+        <div className="pointer-events-auto flex items-center gap-2">
+          {/* Outage Simulation Toggle Button (M2) */}
           <button
-            onClick={() => {
-              setSelectedHouseId(null);
-              setActiveTrade(null);
-              setTradeSuccess(false);
-            }}
-            className="pointer-events-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow"
+            onClick={isSocietyOutage ? restoreSocietyGrid : triggerSocietyOutage}
+            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98] ${
+              isSocietyOutage
+                ? "bg-[#16A34A] hover:bg-[#15803D] text-white border border-[#16A34A]"
+                : "bg-white/90 hover:bg-white text-[#DC2626] border border-[#DC2626]/30 hover:border-[#DC2626]"
+            }`}
+            title={isSocietyOutage ? "Restore utility grid connection for all houses" : "Simulate society-wide power substation failure"}
           >
-            <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
-            <span>Reset View</span>
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>{isSocietyOutage ? "Restore Grid" : "Simulate Outage"}</span>
           </button>
-        )}
+
+          {selectedHouse && (
+            <button
+              onClick={() => {
+                setSelectedHouseId(null);
+                setActiveTrade(null);
+                setTradeSuccess(false);
+              }}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
+              <span>Reset View</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ================= ENHANCED NODE INFORMATION POPUP / CARD (F2) ================= */}

@@ -8,6 +8,8 @@ import {
 } from "../config/houses";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "../lib/supabase";
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5001";
+
 export interface HouseLiveState extends HouseConfig {
   solarKwh: number; // gg_kwh
   usageKwh: number; // gc_kwh + cl_kwh
@@ -24,8 +26,10 @@ export interface HouseLiveState extends HouseConfig {
 }
 
 // Initial realistic baseline state for the 12 houses before live ticks arrive
+// House C6 (Household 141) starts with mock blackout to demonstrate consumer islanding
 const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
   const isSolar = cfg.type === "prosumer";
+  const isMockBlackout = cfg.id === "C6";
   const solarKwh = isSolar ? (cfg.id === "P3" ? 4.2 : cfg.id === "P1" ? 3.2 : 2.8) : 0.0;
   const usageKwh = isSolar ? (cfg.id === "P3" ? 1.1 : 0.9) : (cfg.id === "C1" ? 1.2 : cfg.id === "C6" ? 1.5 : 1.4);
   const netKwh = Number((usageKwh - solarKwh).toFixed(2));
@@ -44,10 +48,10 @@ const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
     netKwh,
     surplusKwh,
     walletAddress,
-    powerState: "grid",
+    powerState: isMockBlackout ? "blackout" : "grid",
     batteryKwh: isSolar ? (cfg.initialBatteryKwh ?? 4.5) : 0,
     batteryCapacityKwh: isSolar ? (cfg.batteryCapacityKwh ?? 6.0) : 0,
-    isOutage: false,
+    isOutage: isMockBlackout,
     lastUpdated: new Date().toISOString(),
   };
 });
@@ -55,15 +59,68 @@ const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
 export function useMicrogridData() {
   const [houses, setHouses] = useState<HouseLiveState[]>(INITIAL_LIVE_STATE);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
+  const [isSocietyOutage, setIsSocietyOutage] = useState<boolean>(false);
   const [lastTickTime, setLastTickTime] = useState<string | null>(null);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
 
   const fetchLatestTelemetry = useCallback(async () => {
+    // 1. Check backend status endpoint for authoritative grid and house state
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/status`, { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          if (typeof json.isSocietyOutage === "boolean") {
+            setIsSocietyOutage(json.isSocietyOutage);
+          }
+          if (Array.isArray(json.houses) && json.houses.length > 0) {
+            setHouses((prev) =>
+              prev.map((h) => {
+                const remote = json.houses.find(
+                  (r: { household_id: number }) => r.household_id === h.householdId
+                );
+                if (!remote) return h;
+                const pState = remote.power_state as HouseLiveState["powerState"];
+                return {
+                  ...h,
+                  powerState: pState,
+                  batteryKwh: Number(remote.battery_kwh ?? h.batteryKwh),
+                  batteryCapacityKwh: Number(remote.battery_capacity_kwh ?? h.batteryCapacityKwh),
+                  isOutage: pState === "blackout" || pState === "line_cut",
+                };
+              })
+            );
+          }
+        }
+      }
+    } catch {
+      // Backend not running, proceed directly to Supabase client
+    }
+
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
 
     try {
-      // 1. Fetch household wallet addresses
+      // 2. Check active society outage events in Supabase
+      const { data: eventData } = await supabase
+        .from("grid_events")
+        .select("*")
+        .eq("scope", "society")
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1);
+
+      if (eventData && eventData.length > 0) {
+        setIsSocietyOutage(true);
+      }
+
+      // 3. Fetch persistent house status from Supabase
+      const { data: houseStatusData } = await supabase
+        .from("house_status")
+        .select("*")
+        .in("household_id", ALL_LIVE_HOUSEHOLD_IDS);
+
+      // 4. Fetch household wallet addresses
       const { data: householdsData, error: hhErr } = await supabase
         .from("households")
         .select("household_id, wallet_address")
@@ -73,7 +130,7 @@ export function useMicrogridData() {
         console.warn("[EnergyOS] Error fetching households:", hhErr.message);
       }
 
-      // 2. Fetch latest readings for each of the 12 live houses
+      // 5. Fetch latest readings for each of the 12 live houses
       const { data: readingsData, error: readErr } = await supabase
         .from("consumption_readings")
         .select("household_id, ts, gc_kwh, cl_kwh, gg_kwh, net_kwh")
@@ -85,7 +142,7 @@ export function useMicrogridData() {
         console.warn("[EnergyOS] Error fetching readings:", readErr.message);
       }
 
-      // 3. Fetch latest forecasts
+      // 6. Fetch latest forecasts
       const { data: forecastsData, error: fcErr } = await supabase
         .from("forecasts")
         .select("household_id, ts, predicted_consumption_kwh, predicted_generation_kwh")
@@ -102,13 +159,18 @@ export function useMicrogridData() {
           const hh = householdsData?.find((row) => row.household_id === h.householdId);
           const reading = readingsData?.find((row) => row.household_id === h.householdId);
           const forecast = forecastsData?.find((row) => row.household_id === h.householdId);
-
-          if (!reading && !hh && !forecast) return h;
+          const statusRow = houseStatusData?.find((row) => row.household_id === h.householdId);
 
           const solar = reading ? Number(reading.gg_kwh) : h.solarKwh;
           const usage = reading ? Number(reading.gc_kwh) + Number(reading.cl_kwh) : h.usageKwh;
           const net = reading ? Number(reading.net_kwh) : Number((usage - solar).toFixed(2));
           const surplus = Number((-net).toFixed(2));
+
+          const powerState = statusRow 
+            ? (statusRow.power_state as HouseLiveState["powerState"]) 
+            : h.powerState;
+          const batteryKwh = statusRow ? Number(statusRow.battery_kwh) : h.batteryKwh;
+          const batteryCapacityKwh = statusRow ? Number(statusRow.battery_capacity_kwh) : h.batteryCapacityKwh;
 
           return {
             ...h,
@@ -116,6 +178,10 @@ export function useMicrogridData() {
             usageKwh: Number(usage.toFixed(2)),
             netKwh: Number(net.toFixed(2)),
             surplusKwh: surplus,
+            powerState,
+            batteryKwh,
+            batteryCapacityKwh,
+            isOutage: powerState === "blackout" || powerState === "line_cut",
             walletAddress: hh?.wallet_address || h.walletAddress,
             predictedConsumptionKwh: forecast ? Number(forecast.predicted_consumption_kwh) : h.predictedConsumptionKwh,
             predictedGenerationKwh: forecast ? Number(forecast.predicted_generation_kwh) : h.predictedGenerationKwh,
@@ -128,7 +194,65 @@ export function useMicrogridData() {
         setLastTickTime(readingsData[0].ts);
       }
     } catch (err: unknown) {
-      console.warn("[EnergyOS] Failed to query initial Supabase data:", err);
+      console.warn("[EnergyOS] Failed to query Supabase data:", err);
+    }
+  }, []);
+
+  // Trigger Society-Wide Grid Outage
+  const triggerSocietyOutage = useCallback(async () => {
+    setIsSocietyOutage(true);
+    setHouses((prev) =>
+      prev.map((h) => {
+        const isSolar = h.type === "prosumer";
+        const powerState: HouseLiveState["powerState"] = isSolar
+          ? h.batteryKwh > 0 ? "battery" : "blackout"
+          : "blackout";
+        return {
+          ...h,
+          powerState,
+          isOutage: powerState === "blackout",
+        };
+      })
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/outage`, { method: "POST" });
+    } catch (err) {
+      console.warn("[EnergyOS] Backend offline on outage trigger, persisting to Supabase:", err);
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        await supabase.from("grid_events").insert({
+          scope: "society",
+          event_type: "outage",
+          started_at: new Date().toISOString(),
+        });
+      }
+    }
+  }, []);
+
+  // Restore Society-Wide Grid
+  const restoreSocietyGrid = useCallback(async () => {
+    setIsSocietyOutage(false);
+    setHouses((prev) =>
+      prev.map((h) => ({
+        ...h,
+        powerState: "grid",
+        isOutage: false,
+      }))
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/outage/restore`, { method: "POST" });
+    } catch (err) {
+      console.warn("[EnergyOS] Backend offline on outage restore, persisting to Supabase:", err);
+      const supabase = getSupabaseBrowserClient();
+      if (supabase) {
+        await supabase
+          .from("grid_events")
+          .update({ ended_at: new Date().toISOString() })
+          .eq("scope", "society")
+          .is("ended_at", null);
+      }
     }
   }, []);
 
@@ -142,7 +266,7 @@ export function useMicrogridData() {
     // Initial fetch
     fetchLatestTelemetry();
 
-    // Subscribe to Realtime events
+    // Subscribe to Realtime events across readings, forecasts, grid_events, and house_status
     const channel = supabase.channel("microgrid_3d_live_feed");
     channelRef.current = channel;
 
@@ -175,16 +299,40 @@ export function useMicrogridData() {
               const net = Number(row.net_kwh);
               const surplus = Number((-net).toFixed(2));
 
+              // Realtime Battery physics
+              let batteryKwh = h.batteryKwh;
+              let powerState = h.powerState;
+              if (h.type === "prosumer") {
+                if (surplus > 0) {
+                  batteryKwh = Math.min(h.batteryCapacityKwh, Number((batteryKwh + surplus).toFixed(2)));
+                } else if (isSocietyOutage || h.powerState === "battery") {
+                  batteryKwh = Math.max(0, Number((batteryKwh + surplus).toFixed(2)));
+                  if (batteryKwh <= 0 && solar < usage) {
+                    powerState = "blackout";
+                  }
+                }
+              }
+
               return {
                 ...h,
                 solarKwh: Number(solar.toFixed(2)),
                 usageKwh: Number(usage.toFixed(2)),
                 netKwh: Number(net.toFixed(2)),
                 surplusKwh: surplus,
+                batteryKwh,
+                powerState,
+                isOutage: powerState === "blackout" || powerState === "line_cut",
                 lastUpdated: row.ts,
               };
             })
           );
+
+          // Sync tick with backend battery model
+          fetch(`${BACKEND_URL}/api/tick-sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ readings: [row] }),
+          }).catch(() => {});
         }
       )
       .on(
@@ -215,6 +363,54 @@ export function useMicrogridData() {
           );
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "grid_events",
+        },
+        (payload) => {
+          const row = (payload.new || payload.old) as {
+            scope?: string;
+            ended_at?: string | null;
+          };
+          if (row && row.scope === "society") {
+            setIsSocietyOutage(!row.ended_at);
+          }
+          fetchLatestTelemetry();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "house_status",
+        },
+        (payload) => {
+          const row = payload.new as {
+            household_id: number;
+            power_state: HouseLiveState["powerState"];
+            battery_kwh: number;
+            battery_capacity_kwh: number;
+          };
+          if (!row || !row.household_id) return;
+
+          setHouses((prev) =>
+            prev.map((h) => {
+              if (h.householdId !== row.household_id) return h;
+              return {
+                ...h,
+                powerState: row.power_state,
+                batteryKwh: Number(row.battery_kwh),
+                batteryCapacityKwh: Number(row.battery_capacity_kwh),
+                isOutage: row.power_state === "blackout" || row.power_state === "line_cut",
+              };
+            })
+          );
+        }
+      )
       .subscribe((status) => {
         setIsLiveConnected(status === "SUBSCRIBED");
       });
@@ -225,14 +421,16 @@ export function useMicrogridData() {
         channelRef.current = null;
       }
     };
-  }, [fetchLatestTelemetry]);
+  }, [fetchLatestTelemetry, isSocietyOutage]);
 
   return {
     houses,
     setHouses,
     isLiveConnected,
+    isSocietyOutage,
     lastTickTime,
+    triggerSocietyOutage,
+    restoreSocietyGrid,
     refetch: fetchLatestTelemetry,
   };
 }
-
