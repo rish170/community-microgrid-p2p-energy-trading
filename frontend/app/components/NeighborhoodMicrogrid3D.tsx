@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect, Suspense } from "react";
+import React, { useState, useRef, useMemo, useEffect, Suspense, memo } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -363,7 +363,7 @@ function House3D({
 // =========================================================================
 
 // Authentic Minecraft Voxel Tree (Oak, Spruce, Birch)
-function MinecraftTree({ 
+const MinecraftTree = memo(function MinecraftTree({ 
   x, 
   z, 
   y = 0, 
@@ -460,10 +460,10 @@ function MinecraftTree({
       )}
     </group>
   );
-}
+});
 
 // Minecraft Voxel Flowers (Poppies, Dandelions, Cornflowers)
-function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: number }) {
+const MinecraftFlowerCluster = memo(function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: number }) {
   return (
     <group position={[x, y, z]}>
       {/* Red Poppy */}
@@ -497,13 +497,13 @@ function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: num
       </mesh>
     </group>
   );
-}
+});
 
 // =========================================================================
 // BOUNDED MINECRAFT VOXEL TERRAIN & NATURAL SURROUNDINGS
 // =========================================================================
 
-function MinecraftVoxelTerrain() {
+const MinecraftVoxelTerrain = memo(function MinecraftVoxelTerrain() {
   return (
     <group>
       {/* ----------------- 1. FINITE VOXEL BASE CHUNK SLAB (52 x 38) ----------------- */}
@@ -582,13 +582,13 @@ function MinecraftVoxelTerrain() {
       </mesh>
     </group>
   );
-}
+});
 
 // =========================================================================
 // ROAD, SIDEWALKS, PARCELS & STREET LIGHTS
 // =========================================================================
 
-function MinecraftRoadAndParcels({ 
+const MinecraftRoadAndParcels = memo(function MinecraftRoadAndParcels({ 
   houses = HOUSES_CONFIG as unknown as HouseData[], 
   isSocietyOutage = false 
 }: { 
@@ -762,13 +762,13 @@ function MinecraftRoadAndParcels({
       ))}
     </group>
   );
-}
+});
 
 // =========================================================================
 // COMMUNITY MICROGRID INFRASTRUCTURE (BESS SUBSTATION & SOLAR CARPORT)
 // =========================================================================
 
-function MicrogridCommunityInfrastructure() {
+const MicrogridCommunityInfrastructure = memo(function MicrogridCommunityInfrastructure() {
   return (
     <group>
       {/* ----------------- WEST END: COMMUNITY BESS & SUBSTATION ----------------- */}
@@ -938,13 +938,13 @@ function MicrogridCommunityInfrastructure() {
       </group>
     </group>
   );
-}
+});
 
 // =========================================================================
 // MINECRAFT PERIMETER TREES & NATURAL FOLIAGE BARRIER
 // =========================================================================
 
-function MinecraftPerimeterForest() {
+const MinecraftPerimeterForest = memo(function MinecraftPerimeterForest() {
   const treeList = useMemo(() => [
     // North Perimeter Elevated Ridge Trees (Naturally enclosing North boundary)
     { x: -24.0, z: -14.5, y: 0.6, type: "spruce" as const, scale: 1.15 },
@@ -1019,7 +1019,7 @@ function MinecraftPerimeterForest() {
       ))}
     </group>
   );
-}
+});
 
 // =========================================================================
 // ENERGY CONDUIT & PARTICLES
