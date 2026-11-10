@@ -175,3 +175,4 @@ export function get3DDistance(houseA: HouseConfig, houseB: HouseConfig): number 
   const dz = houseA.z - houseB.z;
   return Math.sqrt(dx * dx + dz * dz);
 }
+

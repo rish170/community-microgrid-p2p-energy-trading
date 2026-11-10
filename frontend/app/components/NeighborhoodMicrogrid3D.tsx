@@ -14,7 +14,9 @@ import {
   BatteryCharging,
   SunMedium,
   Activity,
-  Radio
+  Radio,
+  Copy,
+  Check
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
@@ -1064,6 +1066,7 @@ export default function NeighborhoodMicrogrid3D() {
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
   // Derive selected house from live state
@@ -1071,6 +1074,14 @@ export default function NeighborhoodMicrogrid3D() {
     () => houses.find((h) => h.id === selectedHouseId) || null,
     [houses, selectedHouseId]
   );
+
+  const handleCopyAddress = (addr: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(addr);
+      setCopiedAddress(true);
+      setTimeout(() => setCopiedAddress(false), 1800);
+    }
+  };
 
   // Community aggregated metrics derived from the 12 houses
   const totalGen = useMemo(
@@ -1257,14 +1268,14 @@ export default function NeighborhoodMicrogrid3D() {
         )}
       </div>
 
-      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD ================= */}
+      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD (F2) ================= */}
       {selectedHouse && (
-        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-80 sm:w-88 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
+        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-92 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
           
           {/* Header */}
           <div className="flex items-start justify-between border-b border-[#E2E8F0] pb-3 mb-3.5">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-mono font-bold text-[#1E293B] px-2 py-0.5 rounded bg-[#F1F5F9] border border-[#CBD5E1]">
                   {selectedHouse.id}
                 </span>
@@ -1278,9 +1289,38 @@ export default function NeighborhoodMicrogrid3D() {
                 }`}>
                   {selectedHouse.type}
                 </span>
+
+                {/* Status Chip (F2) */}
+                <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                  selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                    ? "bg-[#E11D48]/10 text-[#E11D48] border border-[#E11D48]/20"
+                    : selectedHouse.powerState === "line_cut"
+                    ? "bg-[#D97706]/10 text-[#D97706] border border-[#D97706]/20"
+                    : selectedHouse.powerState === "battery"
+                    ? "bg-[#D99A22]/10 text-[#D99A22] border border-[#D99A22]/20"
+                    : "bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20"
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                      ? "bg-[#E11D48] animate-pulse"
+                      : selectedHouse.powerState === "line_cut"
+                      ? "bg-[#D97706]"
+                      : selectedHouse.powerState === "battery"
+                      ? "bg-[#D99A22]"
+                      : "bg-[#16A34A]"
+                  }`} />
+                  {selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                    ? "Blackout"
+                    : selectedHouse.powerState === "line_cut"
+                    ? "Line Cut"
+                    : selectedHouse.powerState === "battery"
+                    ? "On Battery"
+                    : "Grid Connected"}
+                </span>
+
                 {selectedHouse.isShowcase && (
                   <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#5277D5]/10 text-[#5277D5] border border-[#5277D5]/20">
-                    Demo Node
+                    Showcase
                   </span>
                 )}
               </div>
@@ -1297,57 +1337,111 @@ export default function NeighborhoodMicrogrid3D() {
             </button>
           </div>
 
-          {/* Three Key Energy Metrics in Units (1 UNIT = 1 kWh) */}
-          <div className="space-y-2 text-xs font-mono mb-4 bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0]">
+          {/* Battery Storage Gauge for Solar Prosumers (F2) */}
+          {selectedHouse.type === "prosumer" && (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5 font-mono text-xs">
+              <div className="flex justify-between items-center text-[#64748B]">
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <BatteryCharging className="w-3.5 h-3.5 text-[#D99A22]" />
+                  <span>Battery Storage</span>
+                </span>
+                <span className="font-semibold text-[#1D1D1F] tabular-nums">
+                  {selectedHouse.batteryKwh.toFixed(1)} / {selectedHouse.batteryCapacityKwh.toFixed(1)} kWh ({Math.round((selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) <= 0.2
+                      ? "bg-[#E11D48]"
+                      : (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) <= 0.5
+                      ? "bg-[#D99A22]"
+                      : "bg-[#16A34A]"
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(0, (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) * 100))}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Three Key Energy Metrics in Honest kWh (per 30-min tick) */}
+          <div className="space-y-2 text-xs font-mono mb-3.5 bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0]">
             <div className="flex justify-between items-center">
-              <span className="text-[#64748B]">Generated Energy</span>
+              <span className="text-[#64748B]">Generated Solar</span>
               <span className="text-[#D97706] font-semibold tabular-nums">{selectedHouse.solarKwh.toFixed(2)} kWh</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-[#64748B]">Consumed Energy</span>
+              <span className="text-[#64748B]">Consumed Load</span>
               <span className="text-[#1E293B] font-semibold tabular-nums">{selectedHouse.usageKwh.toFixed(2)} kWh</span>
             </div>
             <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-2 font-bold">
-              <span className="text-[#1E293B]">Net Balance</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[#1E293B]">Net Balance</span>
+                <span className="text-[10px] text-[#94A3B8] font-normal" title="Energy per 30-minute simulation tick">(per 30m)</span>
+              </div>
               <span className={`tabular-nums ${selectedHouse.surplusKwh >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
                 {selectedHouse.surplusKwh >= 0 ? `+${selectedHouse.surplusKwh.toFixed(2)} kWh surplus` : `${selectedHouse.surplusKwh.toFixed(2)} kWh deficit`}
               </span>
             </div>
             {selectedHouse.predictedConsumptionKwh !== undefined && (
               <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-1.5 text-[10px] text-[#64748B]">
-                <span>Next-Tick Forecast:</span>
+                <span>Forecasted Need:</span>
                 <span className="font-semibold text-[#5277D5]">
-                  {selectedHouse.predictedConsumptionKwh.toFixed(2)} kWh need
+                  {selectedHouse.predictedConsumptionKwh.toFixed(2)} kWh
                 </span>
               </div>
             )}
           </div>
 
-          {/* Outage status alert if any */}
-          {selectedHouse.isOutage && (
-            <div className="mb-3.5 p-2.5 rounded-xl bg-[#E11D48]/10 border border-[#E11D48]/20 text-xs text-[#E11D48] flex items-center gap-2 font-mono">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>Grid outage active (1.5 kWh deficit)</span>
+          {/* Wallet Address with Copy Feedback */}
+          <div className="text-[11px] font-mono text-[#64748B] mb-4 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-1.5 rounded-xl border border-[#E2E8F0]">
+            <span>Wallet Node:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[#1E293B] font-semibold truncate max-w-[170px]" title={selectedHouse.walletAddress}>
+                {selectedHouse.walletAddress.length > 14 
+                  ? `${selectedHouse.walletAddress.slice(0, 6)}...${selectedHouse.walletAddress.slice(-4)}`
+                  : selectedHouse.walletAddress}
+              </span>
+              <button
+                onClick={() => handleCopyAddress(selectedHouse.walletAddress)}
+                className="p-1 text-[#64748B] hover:text-[#1E293B] rounded transition cursor-pointer"
+                title="Copy full wallet address"
+              >
+                {copiedAddress ? <Check className="w-3.5 h-3.5 text-[#16A34A]" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
             </div>
-          )}
-
-          {/* Wallet Address */}
-          <div className="text-[11px] font-mono text-[#64748B] mb-4 flex items-center justify-between">
-            <span>Node Address:</span>
-            <span className="text-[#1E293B] bg-white px-2 py-0.5 rounded border border-[#CBD5E1] truncate max-w-[190px]" title={selectedHouse.walletAddress}>
-              {selectedHouse.walletAddress}
-            </span>
           </div>
 
-          {/* Action Trigger */}
-          <button
-            onClick={handleInitiateTrade}
-            disabled={activeTrade !== null}
-            className="w-full py-2.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm"
-          >
-            <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-            <span>{activeTrade ? "Dispatching Electricity..." : "Trade Surplus Energy →"}</span>
-          </button>
+          {/* Context-Aware Action Triggers (F2 - Replaces misleading "Trade surplus energy" button) */}
+          {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut" ? (
+            // Consumer or islanded house without power -> "Request Energy"
+            selectedHouse.type === "consumer" ? (
+              <button
+                onClick={() => handleInitiateTrade()}
+                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                <span>Request Energy Backup →</span>
+              </button>
+            ) : (
+              <div className="w-full py-2 px-3 rounded-xl bg-[#D99A22]/10 border border-[#D99A22]/20 text-[#D99A22] text-xs font-mono flex items-center justify-center gap-2">
+                <BatteryCharging className="w-4 h-4" />
+                <span>Running on Solar &amp; Battery Backup</span>
+              </div>
+            )
+          ) : selectedHouse.type === "prosumer" ? (
+            // Solar Prosumer with normal grid
+            <div className="w-full py-2 px-3 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-[#16A34A] text-xs font-mono flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Grid Synchronized • Ready to Supply</span>
+            </div>
+          ) : (
+            // Consumer with normal grid
+            <div className="w-full py-2 px-3 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-[#16A34A] text-xs font-mono flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Grid Connected (Normal Supply)</span>
+            </div>
+          )}
 
           {/* Trade status receipt */}
           {tradeSuccess && (

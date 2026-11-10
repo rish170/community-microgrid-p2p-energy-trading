@@ -235,3 +235,4 @@ export function useMicrogridData() {
     refetch: fetchLatestTelemetry,
   };
 }
+
