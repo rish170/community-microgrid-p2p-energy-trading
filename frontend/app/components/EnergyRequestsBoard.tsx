@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Sliders,
   Check,
+  ExternalLink,
 } from "lucide-react";
 import { useMicrogridData, EnergyRequest } from "../hooks/useMicrogridData";
 import { HOUSES_CONFIG, HouseConfig } from "../config/houses";
@@ -26,6 +27,7 @@ export default function EnergyRequestsBoard() {
     energyRequests,
     createEnergyRequestAction,
     respondEnergyRequestAction,
+    settleEnergyRequestAction,
     fetchEnergyRequests,
   } = useMicrogridData();
 
@@ -33,6 +35,7 @@ export default function EnergyRequestsBoard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [autoAcceptEnabled, setAutoAcceptEnabled] = useState(true);
   const [isTogglingAutoAccept, setIsTogglingAutoAccept] = useState(false);
+  const [settlingId, setSettlingId] = useState<string | null>(null);
 
   // Form state for creating an energy request
   const [selectedRequesterId, setSelectedRequesterId] = useState<number>(18); // Default C1 (18)
@@ -150,6 +153,19 @@ export default function EnergyRequestsBoard() {
     if (res.success) {
       setActionSuccessMsg(`Prosumer ${decision === "accept" ? "ACCEPTED" : "DENIED"} request.`);
       setTimeout(() => setActionSuccessMsg(null), 3500);
+    }
+  };
+
+  const handleSettle = async (requestId: string) => {
+    setSettlingId(requestId);
+    const result = await settleEnergyRequestAction(requestId);
+    setSettlingId(null);
+    if (result.success) {
+      setActionSuccessMsg(`Trade settled on Sepolia! TxHash: ${result.txHash ? result.txHash.slice(0, 10) + '...' : 'Confirmed'}`);
+      setTimeout(() => setActionSuccessMsg(null), 5000);
+    } else {
+      setActionSuccessMsg(`Settlement error: ${result.error}`);
+      setTimeout(() => setActionSuccessMsg(null), 5000);
     }
   };
 
@@ -452,20 +468,47 @@ export default function EnergyRequestsBoard() {
                   )}
 
                   {req.status === "accepted" && (
-                    <span className="text-[11px] font-mono text-[#27845B] font-semibold">
-                      Queued for M5
+                    <button
+                      onClick={() => handleSettle(req.id)}
+                      disabled={settlingId === req.id}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#5277D5] hover:bg-[#3B5BBD] text-white text-[11px] font-mono font-bold transition cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-60 shadow-xs"
+                      title="Settle trade on Sepolia testnet with test ETH"
+                    >
+                      {settlingId === req.id ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>Settling...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3 h-3 text-[#FACC15]" />
+                          <span>Settle (0.0001 ETH)</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {req.status === "settling" && (
+                    <span className="text-[11px] font-mono text-[#5277D5] flex items-center gap-1.5 animate-pulse">
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <span>Broadcasting Tx...</span>
                     </span>
                   )}
 
                   {req.status === "settled" && req.tx_hash && (
-                    <a
-                      href={`https://sepolia.etherscan.io/tx/${req.tx_hash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-mono text-[#5277D5] hover:underline"
-                    >
-                      View Tx ↗
-                    </a>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-[#16A34A] font-bold">Settled</span>
+                      <a
+                        href={`https://sepolia.etherscan.io/tx/${req.tx_hash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[#5277D5]/10 text-[#5277D5] hover:bg-[#5277D5]/20 text-[10px] font-mono transition"
+                        title="View transaction on Sepolia Etherscan"
+                      >
+                        <span>Etherscan</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
                   )}
                 </div>
               </div>

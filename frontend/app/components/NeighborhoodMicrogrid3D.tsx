@@ -1354,6 +1354,26 @@ export default function NeighborhoodMicrogrid3D() {
     }
   };
 
+  // Trigger 3D Energy Beam animation whenever a request is settling or settled (M5)
+  const lastSettledIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const latestSettled = energyRequests.find(
+      (r) => (r.status === "settled" || r.status === "settling") && r.current_candidate_household_id
+    );
+    if (latestSettled && latestSettled.id !== lastSettledIdRef.current) {
+      lastSettledIdRef.current = latestSettled.id;
+      const seller = houses.find((h) => h.householdId === latestSettled.current_candidate_household_id);
+      const buyer = houses.find((h) => h.householdId === latestSettled.requester_household_id);
+      if (seller && buyer) {
+        setActiveTrade({ from: seller.id, to: buyer.id });
+        const timer = setTimeout(() => {
+          setActiveTrade(null);
+        }, 7000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [energyRequests, houses]);
+
   const handleCopyAddress = (addr: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
       navigator.clipboard.writeText(addr);

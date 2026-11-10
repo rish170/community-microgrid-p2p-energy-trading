@@ -489,6 +489,36 @@ export function useMicrogridData() {
     []
   );
 
+  const settleEnergyRequestAction = useCallback(
+    async (requestId: string) => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/requests/${requestId}/settle`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        const json = await res.json();
+        if (json.success && json.request) {
+          setEnergyRequests((prev) =>
+            prev.map((r) => (r.id === json.request.id ? json.request : r))
+          );
+          fetchLatestTelemetry();
+          return {
+            success: true,
+            txHash: json.txHash as string,
+            etherscanUrl: json.etherscanUrl as string,
+            trade: json.trade,
+            request: json.request as EnergyRequest,
+          };
+        }
+        return { success: false, error: json.error || "Failed to settle request" };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to connect to backend";
+        return { success: false, error: msg };
+      }
+    },
+    [fetchLatestTelemetry]
+  );
+
   useEffect(() => {
     fetchEnergyRequests();
     const interval = setInterval(fetchEnergyRequests, 5000);
@@ -694,6 +724,7 @@ export function useMicrogridData() {
     energyRequests,
     createEnergyRequestAction,
     respondEnergyRequestAction,
+    settleEnergyRequestAction,
     fetchEnergyRequests,
     triggerSocietyOutage,
     restoreSocietyGrid,
