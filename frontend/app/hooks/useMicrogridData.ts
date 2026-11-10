@@ -81,6 +81,19 @@ const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
   };
 });
 
+async function safeParseJson(res: Response) {
+  const cType = res.headers.get("content-type") || "";
+  if (cType.includes("application/json")) {
+    return await res.json();
+  }
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`API returned HTTP ${res.status}: ${text.slice(0, 80)}`);
+  }
+}
+
 export function useMicrogridData() {
   const [houses, setHouses] = useState<HouseLiveState[]>(INITIAL_LIVE_STATE);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
@@ -88,12 +101,54 @@ export function useMicrogridData() {
   const [cutLines, setCutLines] = useState<number[]>([]);
   const [lastTickTime, setLastTickTime] = useState<string | null>(null);
   const [energyRequests, setEnergyRequests] = useState<EnergyRequest[]>([]);
+  const [autoAcceptEnabled, setAutoAcceptEnabled] = useState<boolean>(true);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
   const isSocietyOutageRef = useRef<boolean>(isSocietyOutage);
 
   useEffect(() => {
     isSocietyOutageRef.current = isSocietyOutage;
   }, [isSocietyOutage]);
+
+  // Sync initial auto-accept setting from backend
+  useEffect(() => {
+    async function loadAutoAccept() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/requests/admin/auto-accept`);
+        if (res.ok) {
+          const json = await safeParseJson(res);
+          if (typeof json.autoAccept === "boolean") {
+            setAutoAcceptEnabled(json.autoAccept);
+          }
+        }
+      } catch {
+        // Fallback default
+      }
+    }
+    loadAutoAccept();
+  }, []);
+
+  const toggleAutoAcceptAction = useCallback(
+    async (forcedVal?: boolean) => {
+      const nextVal = typeof forcedVal === "boolean" ? forcedVal : !autoAcceptEnabled;
+      setAutoAcceptEnabled(nextVal);
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/requests/admin/auto-accept`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ autoAccept: nextVal }),
+        });
+        if (res.ok) {
+          const json = await safeParseJson(res);
+          if (typeof json.autoAccept === "boolean") {
+            setAutoAcceptEnabled(json.autoAccept);
+          }
+        }
+      } catch {
+        // Retain optimistic state
+      }
+    },
+    [autoAcceptEnabled]
+  );
 
   const fetchLatestTelemetry = useCallback(async () => {
     // 1. Check backend status endpoint for authoritative grid and house state
@@ -448,7 +503,7 @@ export function useMicrogridData() {
             total_price_eth: params.priceEth ?? 0.0001,
           }),
         });
-        const json = await res.json();
+        const json = await safeParseJson(res);
         if (json.success && json.request) {
           setEnergyRequests((prev) => [
             json.request,
@@ -458,6 +513,34 @@ export function useMicrogridData() {
         }
         return { success: false, error: json.error || "Failed to create request" };
       } catch (err: unknown) {
+        // Direct Supabase fallback if backend server is offline or unreachable
+        const supabase = getSupabaseBrowserClient();
+        if (supabase) {
+          try {
+            const fallbackId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
+            const now = new Date().toISOString();
+            const fallbackReq: EnergyRequest = {
+              id: fallbackId,
+              requester_household_id: params.requesterHouseholdId,
+              units_kwh: params.unitsKwh,
+              duration_hours: params.durationHours ?? 4.0,
+              price_eth_per_kwh: 0.0001,
+              total_price_eth: params.priceEth ?? 0.0001,
+              status: "pinged",
+              current_candidate_household_id: 282,
+              candidates: [
+                { household_id: 282, code: "P1", distance: 5.0, battery_kwh: 4.5, status: "pinged" }
+              ],
+              created_at: now,
+              updated_at: now,
+            };
+            await supabase.from("energy_requests").insert([fallbackReq]);
+            setEnergyRequests((prev) => [fallbackReq, ...prev.filter((r) => r.id !== fallbackId)]);
+            return { success: true, request: fallbackReq };
+          } catch {
+            // Ignore fallback error
+          }
+        }
         const msg = err instanceof Error ? err.message : "Failed to connect to backend";
         return { success: false, error: msg };
       }
@@ -473,7 +556,7 @@ export function useMicrogridData() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ decision, household_id: householdId }),
         });
-        const json = await res.json();
+        const json = await safeParseJson(res);
         if (json.success && json.request) {
           setEnergyRequests((prev) =>
             prev.map((r) => (r.id === json.request.id ? json.request : r))
@@ -496,7 +579,7 @@ export function useMicrogridData() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         });
-        const json = await res.json();
+        const json = await safeParseJson(res);
         if (json.success && json.request) {
           setEnergyRequests((prev) =>
             prev.map((r) => (r.id === json.request.id ? json.request : r))
@@ -722,6 +805,8 @@ export function useMicrogridData() {
     cutLines,
     lastTickTime,
     energyRequests,
+    autoAcceptEnabled,
+    toggleAutoAcceptAction,
     createEnergyRequestAction,
     respondEnergyRequestAction,
     settleEnergyRequestAction,

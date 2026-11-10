@@ -1244,6 +1244,8 @@ export default function NeighborhoodMicrogrid3D() {
     isSocietyOutage, 
     cutLines,
     energyRequests,
+    autoAcceptEnabled,
+    toggleAutoAcceptAction,
     createEnergyRequestAction,
     respondEnergyRequestAction,
     triggerSocietyOutage, 
@@ -1581,6 +1583,20 @@ export default function NeighborhoodMicrogrid3D() {
 
         {/* Action Controls */}
         <div className="pointer-events-auto flex items-center gap-2">
+          {/* Prosumer Auto-Accept Quick Toggle Pill */}
+          <button
+            onClick={() => toggleAutoAcceptAction()}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98] ${
+              autoAcceptEnabled
+                ? "bg-[#27845B] hover:bg-[#1E6948] text-white border border-[#27845B]"
+                : "bg-white/90 hover:bg-white text-[#64748B] border border-[#CBD5E1] hover:text-[#1E293B]"
+            }`}
+            title="Toggle whether prosumers automatically accept incoming requests after a 2-second delay"
+          >
+            <span className={`w-2 h-2 rounded-full ${autoAcceptEnabled ? "bg-white animate-pulse" : "bg-[#94A3B8]"}`} />
+            <span>Auto-Accept: {autoAcceptEnabled ? "ON (2s)" : "OFF"}</span>
+          </button>
+
           {/* Outage Simulation Toggle Button (M2) */}
           <button
             onClick={isSocietyOutage ? restoreSocietyGrid : triggerSocietyOutage}
@@ -1993,6 +2009,25 @@ export default function NeighborhoodMicrogrid3D() {
               <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-[11px] font-mono">
                 <span className="text-[#64748B]">Fixed Settlement:</span>
                 <span className="font-semibold text-[#1D1D1F]">0.000100 SepoliaETH</span>
+              </div>
+
+              {/* Auto-Accept Toggle Switch */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-[11px] font-mono">
+                <div>
+                  <span className="text-[#1D1D1F] font-semibold block">Prosumer Auto-Accept</span>
+                  <span className="text-[10px] text-[#64748B]">Auto-accept ping after 2s network delay</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleAutoAcceptAction()}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
+                    autoAcceptEnabled
+                      ? "bg-[#27845B]/10 text-[#27845B] border-[#27845B]/30 hover:bg-[#27845B]/20"
+                      : "bg-white text-[#64748B] border-[#CBD5E1] hover:text-[#1E293B]"
+                  }`}
+                >
+                  {autoAcceptEnabled ? "ACTIVE (ON)" : "MANUAL (OFF)"}
+                </button>
               </div>
 
               {modalError && (

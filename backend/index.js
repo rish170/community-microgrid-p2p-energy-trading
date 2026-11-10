@@ -1234,6 +1234,23 @@ app.get("/api/trade/history", (req, res) => {
   });
 });
 
+// Catch-all 404 handler (always returns JSON, never HTML)
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API route not found: ${req.method} ${req.url}`
+  });
+});
+
+// Global Express error handler (always returns JSON, never HTML)
+app.use((err, req, res, next) => {
+  console.error("[Backend Error Handler]:", err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || "Internal server error"
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Connected to Sepolia Network via Ethers.js`);

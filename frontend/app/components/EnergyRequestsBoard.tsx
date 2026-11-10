@@ -25,6 +25,8 @@ export default function EnergyRequestsBoard() {
   const {
     houses,
     energyRequests,
+    autoAcceptEnabled,
+    toggleAutoAcceptAction,
     createEnergyRequestAction,
     respondEnergyRequestAction,
     settleEnergyRequestAction,
@@ -33,8 +35,6 @@ export default function EnergyRequestsBoard() {
 
   const [activeTab, setActiveTab] = useState<"all" | "active" | "accepted" | "history">("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [autoAcceptEnabled, setAutoAcceptEnabled] = useState(true);
-  const [isTogglingAutoAccept, setIsTogglingAutoAccept] = useState(false);
   const [settlingId, setSettlingId] = useState<string | null>(null);
 
   // Form state for creating an energy request
@@ -45,24 +45,6 @@ export default function EnergyRequestsBoard() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
-
-  // Check auto-accept status on mount
-  useEffect(() => {
-    async function checkAutoAccept() {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/requests/admin/auto-accept`);
-        if (res.ok) {
-          const json = await res.json();
-          if (typeof json.autoAccept === "boolean") {
-            setAutoAcceptEnabled(json.autoAccept);
-          }
-        }
-      } catch {
-        // Backend offline, keep default true
-      }
-    }
-    checkAutoAccept();
-  }, []);
 
   // Fetch estimated kWh for the selected house when requester or duration changes
   useEffect(() => {
@@ -98,26 +80,6 @@ export default function EnergyRequestsBoard() {
       isCancelled = true;
     };
   }, [selectedRequesterId, durationHours, isModalOpen]);
-
-  const handleToggleAutoAccept = async () => {
-    setIsTogglingAutoAccept(true);
-    const nextVal = !autoAcceptEnabled;
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/requests/admin/auto-accept`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoAccept: nextVal }),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setAutoAcceptEnabled(json.autoAccept);
-      }
-    } catch {
-      setAutoAcceptEnabled(nextVal);
-    } finally {
-      setIsTogglingAutoAccept(false);
-    }
-  };
 
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,8 +171,7 @@ export default function EnergyRequestsBoard() {
         {/* Global Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
           <button
-            onClick={handleToggleAutoAccept}
-            disabled={isTogglingAutoAccept}
+            onClick={() => toggleAutoAcceptAction()}
             className={`px-3.5 py-2 rounded-xl text-xs font-mono font-medium border transition-all flex items-center gap-2 cursor-pointer ${
               autoAcceptEnabled
                 ? "bg-[#3A7D5C]/10 border-[#3A7D5C]/30 text-[#27845B] hover:bg-[#3A7D5C]/15"
