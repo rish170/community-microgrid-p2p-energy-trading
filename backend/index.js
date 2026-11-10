@@ -940,7 +940,7 @@ app.get("/api/backup/estimate", async (req, res) => {
     141: 1.15   // C6
   };
 
-  const needs = CONSUMER_HOUSEHOLD_IDS.map((cid) => {
+  const needs = CONSUMER_HOUSE_IDS.map((cid) => {
     const rate = consumerBaseRates[cid] || 0.95;
     const needKwh = Number((rate * hours).toFixed(2));
     return {
