@@ -40,7 +40,7 @@ export const NEIGHBORHOOD_HOUSES: HouseData[] = HOUSES_CONFIG.map((cfg) => {
     powerState: "grid",
     batteryKwh: isSolar ? (cfg.initialBatteryKwh ?? 4.5) : 0,
     batteryCapacityKwh: isSolar ? (cfg.batteryCapacityKwh ?? 6.0) : 0,
-    isOutage: cfg.id === "C6",
+    isOutage: false,
   };
 });
 
@@ -137,6 +137,7 @@ function House3D({
   isSelected, 
   isHovered, 
   isLineCut = false,
+  showBadge = true,
   onSelect, 
   onHover
 }: { 
@@ -144,6 +145,7 @@ function House3D({
   isSelected: boolean; 
   isHovered: boolean; 
   isLineCut?: boolean;
+  showBadge?: boolean;
   onSelect: (isMulti: boolean) => void; 
   onHover: (hovered: boolean) => void;
 }) {
@@ -162,6 +164,13 @@ function House3D({
         const mesh = node as THREE.Mesh;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        
+        // Lower the house parcel grass mesh so it sits on the ground without cutting flowers or postboxes (Request 8)
+        const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mesh.name === "Object_2" || mesh.name === "Object_0" || (mat && (mat as THREE.Material).name === "Material.013")) {
+          mesh.position.y = -1.02; // relative to house group: 0.29 + (-0.951 * 0.28) = 0.0237 flush on ground
+        }
+
         if (Array.isArray(mesh.material)) {
           mesh.material = mesh.material.map((m) => m.clone());
         } else if (mesh.material) {
@@ -296,64 +305,66 @@ function House3D({
         </mesh>
       )}
 
-      {/* Floating Overhead Badge */}
-      <Html position={[0, 2.5, 0]} center distanceFactor={24}>
-        <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
-          isSelected 
-            ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
-            : isLineCutActive
-            ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
-            : isBlackout
-            ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
-            : isOnBattery
-            ? "bg-[#1A1404]/95 text-[#FEF08A] border border-[#F59E0B]/60 shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
-            : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
-        }`}>
-          <span className={`w-2.5 h-2.5 rounded-full ${
-            isLineCutActive
-              ? "bg-[#D97706] animate-pulse"
+      {/* Floating Overhead Badge (Hidden when another single house is zoomed in) */}
+      {showBadge && (
+        <Html position={[0, 2.5, 0]} center distanceFactor={24}>
+          <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
+            isSelected 
+              ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
+              : isLineCutActive
+              ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
               : isBlackout
-              ? "bg-[#E11D48] animate-ping"
+              ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
               : isOnBattery
-              ? "bg-[#F59E0B] animate-pulse"
-              : isSelected 
-              ? "bg-[#5277D5]" 
-              : isProsumer 
-              ? "bg-[#D99A22]" 
-              : "bg-[#5277D5]"
-          }`} />
-          <span className="font-semibold flex items-center gap-1">
-            <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
-            <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
-              #{house.householdId}
+              ? "bg-[#1A1404]/95 text-[#FEF08A] border border-[#F59E0B]/60 shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
+              : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
+          }`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${
+              isLineCutActive
+                ? "bg-[#D97706] animate-pulse"
+                : isBlackout
+                ? "bg-[#E11D48] animate-ping"
+                : isOnBattery
+                ? "bg-[#F59E0B] animate-pulse"
+                : isSelected 
+                ? "bg-[#5277D5]" 
+                : isProsumer 
+                ? "bg-[#D99A22]" 
+                : "bg-[#5277D5]"
+            }`} />
+            <span className="font-semibold flex items-center gap-1">
+              <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
+              <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
+                #{house.householdId}
+              </span>
             </span>
-          </span>
 
-          {isLineCutActive ? (
-            <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
-              <span>✂️ LINE CUT</span>
-            </span>
-          ) : isBlackout ? (
-            <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
-              <span>⚡ BLACKOUT</span>
-            </span>
-          ) : isOnBattery ? (
-            <span className="font-mono text-[10px] text-[#FDE047] font-semibold flex items-center gap-0.5">
-              <span>🔋 {house.batteryKwh.toFixed(1)} kWh</span>
-            </span>
-          ) : (
-            <span className={`font-mono text-[10px] ${
-              isSelected 
-                ? "text-zinc-300"
-                : house.surplusKwh >= 0 
-                ? "text-[#27845B]" 
-                : "text-[#D94F58]"
-            }`}>
-              {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
-            </span>
-          )}
-        </div>
-      </Html>
+            {isLineCutActive ? (
+              <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
+                <span>✂️ LINE CUT</span>
+              </span>
+            ) : isBlackout ? (
+              <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
+                <span>⚡ BLACKOUT</span>
+              </span>
+            ) : isOnBattery ? (
+              <span className="font-mono text-[10px] text-[#FDE047] font-semibold flex items-center gap-0.5">
+                <span>🔋 {house.batteryKwh.toFixed(1)} kWh</span>
+              </span>
+            ) : (
+              <span className={`font-mono text-[10px] ${
+                isSelected 
+                  ? "text-zinc-300"
+                  : house.surplusKwh >= 0 
+                  ? "text-[#27845B]" 
+                  : "text-[#D94F58]"
+              }`}>
+                {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
+              </span>
+            )}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -677,8 +688,8 @@ const MinecraftRoadAndParcels = memo(function MinecraftRoadAndParcels({
         </group>
       ))}
 
-      {/* Minecraft-Style Glowstone Street Lamps along Sidewalks */}
-      {[-12.5, -7.5, -2.5, 2.5, 7.5, 12.5].map((xLamp, idx) => (
+      {/* Minecraft-Style Glowstone Street Lamps along Sidewalks at Parcel Divisions (Request 9) */}
+      {[-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0].map((xLamp, idx) => (
         <group key={`lamp-pair-${idx}`}>
           {/* North Lamp */}
           <group position={[xLamp, 0, -2.15]}>
@@ -1166,7 +1177,7 @@ function ActiveTradeBeam({
 }
 
 // =========================================================================
-// CAMERA CONTROLLER WITH STRICT BOUNDARY CLAMPING
+// CAMERA CONTROLLER WITH FRONT VIEW FOCUS & INTERACTION STABILITY (Requests 6 & 7)
 // =========================================================================
 
 function CameraController({ 
@@ -1178,11 +1189,26 @@ function CameraController({
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
+  const transitionFrame = useRef(0);
+
+  // Stop camera transition immediately when the user rotates, drags, or zooms (Request 6)
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const handleInteractionStart = () => {
+      isTransitioning.current = false;
+    };
+    controls.addEventListener("start", handleInteractionStart);
+    return () => {
+      controls.removeEventListener("start", handleInteractionStart);
+    };
+  }, [controlsRef]);
 
   useEffect(() => {
-    // Only transition camera when user clicks a different house or resets view
+    // Only transition camera when user selects a different house or resets view
     if (selectedHouse?.id !== prevSelectedId.current) {
       isTransitioning.current = true;
+      transitionFrame.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
     }
   }, [selectedHouse]);
@@ -1190,27 +1216,27 @@ function CameraController({
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
 
-    // STRICT WORLD BOUNDARY CLAMPING:
-    // Clamp the OrbitControls look-at target strictly within the central community microgrid.
-    // This strictly prevents panning the camera beyond the bounded playable diorama!
-    controlsRef.current.target.x = THREE.MathUtils.clamp(controlsRef.current.target.x, -10.0, 10.0);
-    controlsRef.current.target.y = THREE.MathUtils.clamp(controlsRef.current.target.y, 0.0, 2.0);
-    controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -5.0, 5.0);
+    // EXPANDED BOUNDARY CLAMPING: Accommodates corner houses (x = ±12.5) without twitching/jitter (Request 6)
+    controlsRef.current.target.x = THREE.MathUtils.clamp(controlsRef.current.target.x, -18.0, 18.0);
+    controlsRef.current.target.y = THREE.MathUtils.clamp(controlsRef.current.target.y, 0.0, 4.0);
+    controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -8.0, 8.0);
 
     if (isTransitioning.current) {
+      transitionFrame.current++;
       if (selectedHouse) {
-        // Zoom and focus smoothly on selected house
-        const targetPos = new THREE.Vector3(
-          selectedHouse.x + (selectedHouse.z > 0 ? 1.8 : -1.8),
-          3.8,
-          selectedHouse.z + (selectedHouse.z > 0 ? 6.2 : -6.2)
-        );
+        // FRONT VIEW: Look at the house from the central road (street side facing the front porch) (Request 7)
+        // North row (z < 0): front porch faces +Z (road), camera placed at z = selectedHouse.z + 5.2
+        // South row (z > 0): front porch faces -Z (road), camera placed at z = selectedHouse.z - 5.2
+        const cameraZ = selectedHouse.z < 0 
+          ? selectedHouse.z + 5.2 
+          : selectedHouse.z - 5.2;
+        const targetPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
         const targetLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
 
-        state.camera.position.lerp(targetPos, delta * 4.0);
-        controlsRef.current.target.lerp(targetLook, delta * 4.0);
+        state.camera.position.lerp(targetPos, delta * 4.5);
+        controlsRef.current.target.lerp(targetLook, delta * 4.5);
 
-        if (state.camera.position.distanceTo(targetPos) < 0.08) {
+        if (state.camera.position.distanceTo(targetPos) < 0.15 || transitionFrame.current > 45) {
           isTransitioning.current = false;
         }
       } else {
@@ -1218,10 +1244,10 @@ function CameraController({
         const defaultPos = new THREE.Vector3(0, 15, 23);
         const defaultLook = new THREE.Vector3(0, 0.5, 0);
 
-        state.camera.position.lerp(defaultPos, delta * 3.0);
-        controlsRef.current.target.lerp(defaultLook, delta * 3.0);
+        state.camera.position.lerp(defaultPos, delta * 3.5);
+        controlsRef.current.target.lerp(defaultLook, delta * 3.5);
 
-        if (state.camera.position.distanceTo(defaultPos) < 0.15) {
+        if (state.camera.position.distanceTo(defaultPos) < 0.2 || transitionFrame.current > 45) {
           isTransitioning.current = false;
         }
       }
@@ -1445,8 +1471,55 @@ export default function NeighborhoodMicrogrid3D() {
     }, 6000);
   };
 
+  // Smooth scroll-to-zoom and zoom-to-page-scroll transition (Request 5)
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!controlsRef.current) return;
+    const camera = controlsRef.current.object;
+    const target = controlsRef.current.target;
+    const distance = camera.position.distanceTo(target);
+
+    // If scrolling DOWN (deltaY > 0)
+    if (e.deltaY > 0) {
+      // Once zoomed out near max distance (~36.5 out of 38), scroll the webpage down natively
+      if (distance >= 36.5) {
+        controlsRef.current.enableZoom = false;
+        window.scrollBy({ top: e.deltaY, behavior: "auto" });
+      } else {
+        controlsRef.current.enableZoom = true;
+      }
+    } else if (e.deltaY < 0) {
+      // If scrolling UP (deltaY < 0)
+      if (window.scrollY > 0) {
+        // Webpage is scrolled down: scroll webpage up until it reaches top
+        controlsRef.current.enableZoom = false;
+        window.scrollBy({ top: e.deltaY, behavior: "auto" });
+      } else {
+        // Webpage is fully at top: resume 3D canvas zooming in
+        controlsRef.current.enableZoom = true;
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (controlsRef.current) {
+        // While scrolled down the page, disable 3D canvas zoom so scrolling up reaches top
+        if (window.scrollY > 0) {
+          controlsRef.current.enableZoom = false;
+        } else {
+          controlsRef.current.enableZoom = true;
+        }
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
-    <div className="relative w-full h-[92vh] bg-[#DCEAF6] overflow-hidden select-none cursor-grab active:cursor-grabbing">
+    <div 
+      onWheel={handleWheel}
+      className="relative w-full h-[92vh] bg-[#DCEAF6] overflow-hidden select-none cursor-grab active:cursor-grabbing"
+    >
       
       {/* 3D WebGL Canvas */}
       <Canvas
@@ -1504,6 +1577,7 @@ export default function NeighborhoodMicrogrid3D() {
               isSelected={selectedHouseIds.includes(house.id)}
               isHovered={hoveredHouseId === house.id}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
+              showBadge={selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id)}
               onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
               onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
             />
@@ -1523,129 +1597,41 @@ export default function NeighborhoodMicrogrid3D() {
           dampingFactor={0.08}
           rotateSpeed={0.8}
           zoomSpeed={0.85}
-          minDistance={7}
-          maxDistance={27}
+          minDistance={6}
+          maxDistance={38}
           minPolarAngle={Math.PI / 8}
           maxPolarAngle={Math.PI / 2.18}
         />
       </Canvas>
 
-      {/* ================= ACTIVE SOCIETY OUTAGE EMERGENCY BANNER (M2) ================= */}
-      {isSocietyOutage && (
-        <div className="absolute top-0 left-0 right-0 z-30 bg-gradient-to-r from-[#991B1B] via-[#DC2626] to-[#991B1B] text-white px-4 sm:px-6 py-2 shadow-lg flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300 font-sans">
-          <div className="flex items-center gap-3">
-            <div className="w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0" />
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-mono text-[11px] font-bold uppercase tracking-wider bg-black/30 px-2 py-0.5 rounded">
-                ⚠️ SOCIETY GRID OUTAGE ACTIVE
-              </span>
-              <span className="text-xs text-red-100 hidden sm:inline">
-                Utility 33kV feed offline. 6 Non-solar houses in Blackout, 6 solar prosumers islanded on BESS.
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={restoreSocietyGrid}
-              className="px-3 py-1 bg-white hover:bg-zinc-100 text-[#991B1B] font-mono text-xs font-bold rounded-lg shadow-sm transition active:scale-95 cursor-pointer flex items-center gap-1.5"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Restore Utility Grid</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* ================= TOP COMMUNITY TELEMETRY HUD BAR ================= */}
-      <div className={`absolute ${isSocietyOutage ? "top-14" : "top-5"} left-4 right-4 sm:left-6 sm:right-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pointer-events-none z-20 transition-all duration-300`}>
-        <div className="pointer-events-auto bg-white/85 backdrop-blur-xl border border-[#CBD5E1] p-3 sm:px-5 sm:py-2.5 rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.06)] flex flex-wrap items-center gap-3 sm:gap-6">
+      <div className="absolute top-5 left-4 right-4 sm:left-6 sm:right-6 flex items-center justify-between pointer-events-none z-20">
+        {/* Quick Metrics (Cleaned: Generation, Load, Net Balance, Self-Sufficiency - Request 3) */}
+        <div className="pointer-events-auto bg-white/90 backdrop-blur-xl border border-[#CBD5E1] px-4 py-2 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.06)] flex items-center gap-5 text-xs font-mono">
           <div>
-            <div className="text-[10px] font-mono tracking-wider text-[#64748B] uppercase">
-              Community Microgrid Topology
-            </div>
-            <div className="text-xs font-semibold text-[#1E293B] flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${isLiveConnected ? "bg-[#16A34A] animate-pulse" : "bg-[#D99A22]"}`} />
-              <span>12 Residential Nodes • {isLiveConnected ? "Supabase Realtime Live" : "Microgrid Synchronous Baseline"}</span>
-              {lastTickTime && (
-                <span className="text-[10px] font-mono text-[#64748B] hidden md:inline">
-                  [{new Date(lastTickTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}]
-                </span>
-              )}
-            </div>
+            <span className="text-[10px] text-[#64748B] block">Generation</span>
+            <span className="font-semibold text-[#16A34A] tabular-nums">{totalGen} kWh</span>
           </div>
-
-          <div className="h-6 w-px bg-[#CBD5E1] hidden sm:block" />
-
-          {/* Quick Metrics */}
-          <div className="flex items-center gap-5 text-xs font-mono">
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Generation</span>
-              <span className="font-semibold text-[#D97706] tabular-nums">{totalGen} kWh</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Load</span>
-              <span className="font-semibold text-[#1E293B] tabular-nums">{totalLoad} kWh</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Net Balance</span>
-              <span className={`font-semibold tabular-nums ${netSurplus >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
-                {netSurplus >= 0 ? `+${netSurplus}` : netSurplus} kWh
-              </span>
-            </div>
-            <div className="hidden lg:block">
-              <span className="text-[10px] text-[#64748B] block">Self-Sufficiency</span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20">
-                {selfSufficiency}%
-              </span>
-            </div>
+          <div>
+            <span className="text-[10px] text-[#64748B] block">Load</span>
+            <span className="font-semibold text-[#1E293B] tabular-nums">{totalLoad} kWh</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#64748B] block">Net Balance</span>
+            <span className={`font-semibold tabular-nums ${netSurplus >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
+              {netSurplus >= 0 ? `+${netSurplus}` : netSurplus} kWh
+            </span>
+          </div>
+          <div className="hidden sm:block">
+            <span className="text-[10px] text-[#64748B] block">Self-Sufficiency</span>
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20">
+              {selfSufficiency}%
+            </span>
           </div>
         </div>
 
-        {/* Action Controls */}
+        {/* Action Controls (Cleaned: Settings moved to Header Navbar - Request 4) */}
         <div className="pointer-events-auto flex items-center gap-2">
-          {/* Prosumer Auto-Accept Quick Toggle Pill */}
-          <button
-            onClick={() => toggleAutoAcceptAction()}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98] ${
-              autoAcceptEnabled
-                ? "bg-[#27845B] hover:bg-[#1E6948] text-white border border-[#27845B]"
-                : "bg-white/90 hover:bg-white text-[#64748B] border border-[#CBD5E1] hover:text-[#1E293B]"
-            }`}
-            title="Toggle whether prosumers automatically accept incoming requests after a 2-second delay"
-          >
-            <span className={`w-2 h-2 rounded-full ${autoAcceptEnabled ? "bg-white animate-pulse" : "bg-[#94A3B8]"}`} />
-            <span>Auto-Accept: {autoAcceptEnabled ? "ON (2s)" : "OFF"}</span>
-          </button>
-
-          {/* Outage Simulation Toggle Button (M2) */}
-          <button
-            onClick={isSocietyOutage ? restoreSocietyGrid : triggerSocietyOutage}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98] ${
-              isSocietyOutage
-                ? "bg-[#16A34A] hover:bg-[#15803D] text-white border border-[#16A34A]"
-                : "bg-white/90 hover:bg-white text-[#DC2626] border border-[#DC2626]/30 hover:border-[#DC2626]"
-            }`}
-            title={isSocietyOutage ? "Restore utility grid connection for all houses" : "Simulate society-wide power substation failure"}
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>{isSocietyOutage ? "Restore Grid" : "Simulate Outage"}</span>
-          </button>
-
-          {/* Reset Entire Grid & Orders Button */}
-          <button
-            onClick={() => {
-              resetMicrogridAction();
-              setActiveTrade(null);
-              setSelectedHouseIds([]);
-              setTradeSuccess(false);
-            }}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#475569] hover:text-[#0F172A] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98]"
-            title="Reset microgrid: clear all requests and orders, return C6 to blackout baseline, restore battery reserves"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
-            <span>Reset Grid</span>
-          </button>
-
           {selectedHouseIds.length > 0 && (
             <button
               onClick={() => {
@@ -1653,7 +1639,7 @@ export default function NeighborhoodMicrogrid3D() {
                 setActiveTrade(null);
                 setTradeSuccess(false);
               }}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow"
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-98"
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Reset View ({selectedHouseIds.length})</span>

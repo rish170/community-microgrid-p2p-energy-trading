@@ -57,12 +57,11 @@ const inMemoryGridState = {
   houseStatus: new Map(
     ALL_HOUSE_IDS.map((id) => {
       const isSolar = SOLAR_HOUSE_IDS.includes(id);
-      const isMockBlackout = id === 141; // C6 starts in blackout as demonstrated in simulation
       return [
         id,
         {
           household_id: id,
-          power_state: isMockBlackout ? "blackout" : "grid",
+          power_state: "grid",
           battery_kwh: isSolar ? 4.5 : 0.0,
           battery_capacity_kwh: isSolar ? 6.0 : 0.0,
           is_supplied_by_trade: false,
@@ -477,13 +476,12 @@ app.post("/api/grid/reset", async (req, res) => {
   inMemoryGridState.activeOutageEvent = null;
   inMemoryGridState.cutLines.clear();
 
-  // Reset all 12 houses to pristine initial state (solar: 4.5 kWh / grid, consumers: grid, C6: blackout)
+  // Reset all 12 houses to pristine initial state (solar: 4.5 kWh / grid, consumers: grid)
   for (const id of ALL_HOUSE_IDS) {
     const isSolar = SOLAR_HOUSE_IDS.includes(id);
-    const isMockBlackout = id === 141; // C6 starts in blackout as baseline
     inMemoryGridState.houseStatus.set(id, {
       household_id: id,
-      power_state: isMockBlackout ? "blackout" : "grid",
+      power_state: "grid",
       battery_kwh: isSolar ? 4.5 : 0.0,
       battery_capacity_kwh: isSolar ? 6.0 : 0.0,
       is_supplied_by_trade: false,
@@ -524,11 +522,11 @@ app.post("/api/grid/reset", async (req, res) => {
     }
   }
 
-  console.log(`[Backend Grid Engine] Entire grid RESET to initial state at ${now}. C6 returned to blackout, requests cleared.`);
+  console.log(`[Backend Grid Engine] Entire grid RESET to initial state at ${now}. All houses on nominal grid, requests cleared.`);
 
   res.json({
     success: true,
-    message: "Grid reset to initial baseline: requests cleared, C6 in blackout, other houses on grid.",
+    message: "Grid reset to initial baseline: requests cleared, all houses on nominal grid.",
     isSocietyOutage: false,
     cutLines: [],
     requestsCount: 0,

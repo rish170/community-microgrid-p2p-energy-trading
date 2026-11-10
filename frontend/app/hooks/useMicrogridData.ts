@@ -51,14 +51,16 @@ export interface EnergyRequest {
 }
 
 // Initial realistic baseline state for the 12 houses before live ticks arrive
-// House C6 (Household 141) starts with mock blackout to demonstrate consumer islanding
 const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
   const isSolar = cfg.type === "prosumer";
-  const isMockBlackout = cfg.id === "C6";
-  const solarKwh = isSolar ? (cfg.id === "P3" ? 4.2 : cfg.id === "P1" ? 3.2 : 2.8) : 0.0;
-  const usageKwh = isSolar ? (cfg.id === "P3" ? 1.1 : 0.9) : (cfg.id === "C1" ? 1.2 : cfg.id === "C6" ? 1.5 : 1.4);
+  const solarKwh = isSolar 
+    ? (cfg.id === "P3" ? 4.2 : cfg.id === "P6" ? 3.6 : cfg.id === "P1" ? 3.4 : 3.0) 
+    : 0.0;
+  const usageKwh = isSolar 
+    ? (cfg.id === "P3" ? 1.1 : 0.9) 
+    : (cfg.id === "C1" ? 1.2 : cfg.id === "C6" ? 1.4 : 1.3);
   const netKwh = Number((usageKwh - solarKwh).toFixed(2));
-  const surplusKwh = Number((-netKwh).toFixed(2));
+  const surplusKwh = Number((solarKwh - usageKwh).toFixed(2));
 
   // Default addresses highlighting showcase houses P3, C1, C2
   let walletAddress = `0x${cfg.householdId.toString(16).padStart(4, "0")}...${cfg.householdId * 1111}`;
@@ -73,10 +75,10 @@ const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
     netKwh,
     surplusKwh,
     walletAddress,
-    powerState: isMockBlackout ? "blackout" : "grid",
+    powerState: "grid",
     batteryKwh: isSolar ? (cfg.initialBatteryKwh ?? 4.5) : 0,
     batteryCapacityKwh: isSolar ? (cfg.batteryCapacityKwh ?? 6.0) : 0,
-    isOutage: isMockBlackout,
+    isOutage: false,
     lastUpdated: new Date().toISOString(),
   };
 });
@@ -263,10 +265,15 @@ export function useMicrogridData() {
           const forecast = forecastsData?.find((row) => row.household_id === h.householdId);
           const statusRow = houseStatusData?.find((row) => row.household_id === h.householdId);
 
-          const solar = reading ? Number(reading.gg_kwh) : h.solarKwh;
-          const usage = reading ? Number(reading.gc_kwh) + Number(reading.cl_kwh) : h.usageKwh;
-          const net = reading ? Number(reading.net_kwh) : Number((usage - solar).toFixed(2));
-          const surplus = Number((-net).toFixed(2));
+          const nominalSolar = h.type === "prosumer"
+            ? (h.id === "P3" ? 4.2 : h.id === "P6" ? 3.6 : h.id === "P1" ? 3.4 : 3.0)
+            : 0.0;
+          const readingSolar = reading ? Number(reading.gg_kwh) : 0;
+          const solar = readingSolar > 0 ? readingSolar : (h.type === "prosumer" ? nominalSolar : 0);
+          const readingUsage = reading ? Number(reading.gc_kwh) + Number(reading.cl_kwh) : 0;
+          const usage = readingUsage > 0 ? readingUsage : h.usageKwh;
+          const net = Number((usage - solar).toFixed(2));
+          const surplus = Number((solar - usage).toFixed(2));
 
           const powerState = statusRow 
             ? (statusRow.power_state as HouseLiveState["powerState"]) 
@@ -332,18 +339,15 @@ export function useMicrogridData() {
     }
   }, []);
 
-  // Restore Society-Wide Grid (returns houses to grid, preserving C6 initial blackout)
+  // Restore Society-Wide Grid
   const restoreSocietyGrid = useCallback(async () => {
     setIsSocietyOutage(false);
     setHouses((prev) =>
-      prev.map((h) => {
-        const isC6 = h.householdId === 141;
-        return {
-          ...h,
-          powerState: isC6 ? "blackout" : "grid",
-          isOutage: isC6,
-        };
-      })
+      prev.map((h) => ({
+        ...h,
+        powerState: "grid",
+        isOutage: false,
+      }))
     );
 
     try {
@@ -361,19 +365,18 @@ export function useMicrogridData() {
     }
   }, []);
 
-  // Reset Entire Microgrid to initial baseline state (clears orders, resets C6 to blackout, resets battery reserves)
+  // Reset Entire Microgrid to initial baseline state (clears orders, nominal grid, resets battery reserves)
   const resetMicrogridAction = useCallback(async () => {
     setIsSocietyOutage(false);
     setCutLines([]);
     setEnergyRequests([]);
     setHouses((prev) =>
       prev.map((h) => {
-        const isC6 = h.householdId === 141;
         const isSolar = h.type === "prosumer";
         return {
           ...h,
-          powerState: isC6 ? "blackout" : "grid",
-          isOutage: isC6,
+          powerState: "grid",
+          isOutage: false,
           batteryKwh: isSolar ? 4.5 : 0.0,
           batteryCapacityKwh: isSolar ? 6.0 : 0.0,
           isSuppliedByTrade: false,
@@ -684,10 +687,15 @@ export function useMicrogridData() {
           setHouses((prev) =>
             prev.map((h) => {
               if (h.householdId !== row.household_id) return h;
-              const solar = Number(row.gg_kwh);
-              const usage = Number(row.gc_kwh) + Number(row.cl_kwh);
-              const net = Number(row.net_kwh);
-              const surplus = Number((-net).toFixed(2));
+              const nominalSolar = h.type === "prosumer"
+                ? (h.id === "P3" ? 4.2 : h.id === "P6" ? 3.6 : h.id === "P1" ? 3.4 : 3.0)
+                : 0.0;
+              const readingSolar = Number(row.gg_kwh || 0);
+              const solar = readingSolar > 0 ? readingSolar : (h.type === "prosumer" ? nominalSolar : 0);
+              const readingUsage = Number(row.gc_kwh || 0) + Number(row.cl_kwh || 0);
+              const usage = readingUsage > 0 ? readingUsage : h.usageKwh;
+              const net = Number((usage - solar).toFixed(2));
+              const surplus = Number((solar - usage).toFixed(2));
 
               // Realtime Battery physics
               let batteryKwh = h.batteryKwh;
