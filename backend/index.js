@@ -1,7 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const path = require("path");
 const { ethers } = require("ethers");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 require("dotenv").config();
 
 const app = express();
@@ -37,6 +39,24 @@ if (supabaseUrl && supabaseServiceKey) {
   try {
     supabase = createClient(supabaseUrl, supabaseServiceKey);
     console.log("[Backend] Supabase service role client initialized successfully.");
+    // Ensure all houses have nominal grid state on startup when no grid events are active
+    (async () => {
+      try {
+        const { data: activeEvents } = await supabase
+          .from("grid_events")
+          .select("id")
+          .is("ended_at", null);
+        if (!activeEvents || activeEvents.length === 0) {
+          await supabase
+            .from("house_status")
+            .update({ power_state: "grid" })
+            .eq("power_state", "blackout");
+          console.log("[Backend] Initialized house_status to nominal grid (cleared stale blackouts).");
+        }
+      } catch (err) {
+        console.warn("[Backend] Startup house_status check note:", err.message);
+      }
+    })();
   } catch (err) {
     console.warn("[Backend] Failed to initialize Supabase client:", err.message);
   }

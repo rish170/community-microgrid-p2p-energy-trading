@@ -106,10 +106,15 @@ function useMicrogridDataHookInternal() {
   const [autoAcceptEnabled, setAutoAcceptEnabled] = useState<boolean>(true);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
   const isSocietyOutageRef = useRef<boolean>(isSocietyOutage);
+  const cutLinesRef = useRef<number[]>(cutLines);
 
   useEffect(() => {
     isSocietyOutageRef.current = isSocietyOutage;
   }, [isSocietyOutage]);
+
+  useEffect(() => {
+    cutLinesRef.current = cutLines;
+  }, [cutLines]);
 
   // Sync initial auto-accept setting from backend
   useEffect(() => {
@@ -275,9 +280,18 @@ function useMicrogridDataHookInternal() {
           const net = Number((usage - solar).toFixed(2));
           const surplus = Number((solar - usage).toFixed(2));
 
-          const powerState = statusRow 
+          let powerState = statusRow 
             ? (statusRow.power_state as HouseLiveState["powerState"]) 
             : h.powerState;
+
+          // Robustness safeguard against stale database blackout rows:
+          // If no society outage is active and this house's individual feed line is not cut,
+          // ensure powerState is nominal grid (prevents oscillation on C6 / household 141)
+          const isHouseLineCut = cutLines.includes(h.householdId);
+          if (powerState === "blackout" && !isSocietyOutage && !isHouseLineCut) {
+            powerState = "grid";
+          }
+
           const batteryKwh = statusRow ? Number(statusRow.battery_kwh) : h.batteryKwh;
           const batteryCapacityKwh = statusRow ? Number(statusRow.battery_capacity_kwh) : h.batteryCapacityKwh;
 
@@ -797,15 +811,20 @@ function useMicrogridDataHookInternal() {
           };
           if (!row || !row.household_id) return;
 
+          const isCut = cutLinesRef.current ? cutLinesRef.current.includes(row.household_id) : false;
+          const safePowerState = (row.power_state === "blackout" && !isSocietyOutageRef.current && !isCut)
+            ? "grid"
+            : row.power_state;
+
           setHouses((prev) =>
             prev.map((h) => {
               if (h.householdId !== row.household_id) return h;
               return {
                 ...h,
-                powerState: row.power_state,
+                powerState: safePowerState,
                 batteryKwh: Number(row.battery_kwh),
                 batteryCapacityKwh: Number(row.battery_capacity_kwh),
-                isOutage: row.power_state === "blackout" || row.power_state === "line_cut",
+                isOutage: safePowerState === "blackout" || safePowerState === "line_cut",
               };
             })
           );

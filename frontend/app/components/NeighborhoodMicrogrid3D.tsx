@@ -355,14 +355,14 @@ function House3D({
       {showBadge && (
         <Html position={[0, 2.5, 0]} center distanceFactor={24} zIndexRange={[1, 10]}>
           <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
-            isSelected 
-              ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
-              : isLineCutActive
+            isLineCutActive
               ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
               : isBlackout
               ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
               : isOnBattery
               ? "bg-[#1A1404]/95 text-[#FEF08A] border border-[#F59E0B]/60 shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
+              : isSelected 
+              ? "bg-white/95 text-[#1D1D1F] border border-[#5277D5] shadow-[0_4px_16px_rgba(82,119,213,0.25)] ring-2 ring-[#5277D5] font-semibold"
               : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
           }`}>
             <span className={`w-2.5 h-2.5 rounded-full ${
@@ -372,15 +372,13 @@ function House3D({
                 ? "bg-[#E11D48] animate-ping"
                 : isOnBattery
                 ? "bg-[#F59E0B] animate-pulse"
-                : isSelected 
-                ? "bg-[#5277D5]" 
                 : isProsumer 
                 ? "bg-[#D99A22]" 
                 : "bg-[#5277D5]"
             }`} />
-            <span className="font-semibold flex items-center gap-1">
-              <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : ""}>{house.id}</span>
-              <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
+            <span className="font-semibold flex items-center gap-1 text-[#1D1D1F]">
+              <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : "text-[#1D1D1F]"}>{house.id}</span>
+              <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : "text-[#6E6E73]"}`}>
                 #{house.householdId}
               </span>
             </span>
@@ -399,9 +397,7 @@ function House3D({
               </span>
             ) : (
               <span className={`font-mono text-[10px] ${
-                isSelected 
-                  ? "text-zinc-300"
-                  : house.surplusKwh >= 0 
+                house.surplusKwh >= 0 
                   ? "text-[#27845B]" 
                   : "text-[#D94F58]"
               }`}>
