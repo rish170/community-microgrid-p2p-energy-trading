@@ -1243,6 +1243,9 @@ export default function NeighborhoodMicrogrid3D() {
     lastTickTime, 
     isSocietyOutage, 
     cutLines,
+    energyRequests,
+    createEnergyRequestAction,
+    respondEnergyRequestAction,
     triggerSocietyOutage, 
     restoreSocietyGrid,
     cutLinesAction,
@@ -1254,6 +1257,16 @@ export default function NeighborhoodMicrogrid3D() {
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+
+  // Energy Request Modal state (M4)
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [modalRequesterId, setModalRequesterId] = useState<number | null>(null);
+  const [modalDurationHours, setModalDurationHours] = useState<number>(4.0);
+  const [modalKwh, setModalKwh] = useState<string>("3.80");
+  const [isEstimatingModal, setIsEstimatingModal] = useState<boolean>(false);
+  const [isSubmittingModal, setIsSubmittingModal] = useState<boolean>(false);
+  const [modalSuccessMsg, setModalSuccessMsg] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   // Multi-selection handler: supports single-click, Shift+Click, Ctrl/Cmd+Click
   const handleHouseSelect = (houseId: string, isMulti: boolean) => {
@@ -1274,6 +1287,72 @@ export default function NeighborhoodMicrogrid3D() {
     [houses, selectedHouseIds]
   );
   const selectedHouse = selectedHouses.length === 1 ? selectedHouses[0] : null;
+
+  // Active incoming ping for currently selected prosumer
+  const incomingPing = useMemo(() => {
+    if (!selectedHouse || selectedHouse.type !== "prosumer") return null;
+    return energyRequests.find(
+      (r) => r.status === "pinged" && r.current_candidate_household_id === selectedHouse.householdId
+    );
+  }, [selectedHouse, energyRequests]);
+
+  // Load estimated energy needed when request modal opens for a consumer
+  useEffect(() => {
+    if (!isRequestModalOpen || !modalRequesterId) return;
+    let isCancelled = false;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5001";
+    async function loadEstimate() {
+      setIsEstimatingModal(true);
+      try {
+        const res = await fetch(`${backendUrl}/api/backup/estimate?hours=${modalDurationHours}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (!isCancelled && Array.isArray(json.needs)) {
+            const need = json.needs.find((n: { household_id: number }) => n.household_id === modalRequesterId);
+            if (need && need.need_kwh) {
+              setModalKwh(need.need_kwh.toFixed(2));
+            }
+          }
+        }
+      } catch {
+        if (!isCancelled) setModalKwh((0.95 * modalDurationHours).toFixed(2));
+      } finally {
+        if (!isCancelled) setIsEstimatingModal(false);
+      }
+    }
+    loadEstimate();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isRequestModalOpen, modalRequesterId, modalDurationHours]);
+
+  const handleModalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalRequesterId) return;
+    const kwh = parseFloat(modalKwh);
+    if (!kwh || kwh <= 0) {
+      setModalError("Please enter a valid energy amount in kWh");
+      return;
+    }
+    setIsSubmittingModal(true);
+    setModalError(null);
+    const res = await createEnergyRequestAction({
+      requesterHouseholdId: modalRequesterId,
+      unitsKwh: kwh,
+      durationHours: modalDurationHours,
+      priceEth: 0.0001,
+    });
+    setIsSubmittingModal(false);
+    if (res.success) {
+      setModalSuccessMsg(`Dispatched emergency request for ${kwh} kWh to nearest prosumer!`);
+      setTimeout(() => {
+        setIsRequestModalOpen(false);
+        setModalSuccessMsg(null);
+      }, 2500);
+    } else {
+      setModalError(res.error || "Failed to submit request");
+    }
+  };
 
   const handleCopyAddress = (addr: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -1684,34 +1763,60 @@ export default function NeighborhoodMicrogrid3D() {
             )}
           </div>
 
-          {/* Context-Aware Action Triggers (F2 - Replaces misleading "Trade surplus energy" button) */}
-          {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut" ? (
-            // Consumer or islanded house without power -> "Request Energy"
-            selectedHouse.type === "consumer" ? (
-              <button
-                onClick={() => handleInitiateTrade()}
-                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-              >
-                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-                <span>Request Energy Backup →</span>
-              </button>
-            ) : (
-              <div className="w-full py-2 px-3 rounded-xl bg-[#D99A22]/10 border border-[#D99A22]/20 text-[#D99A22] text-xs font-mono flex items-center justify-center gap-2">
-                <BatteryCharging className="w-4 h-4" />
-                <span>Running on Solar &amp; Battery Backup</span>
+          {/* Incoming Candidate Prosumer Ping Alert (F7) */}
+          {incomingPing && (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 font-mono text-xs">
+              <div className="flex items-center gap-1.5 text-[#D97706] font-bold mb-1">
+                <Zap className="w-3.5 h-3.5 fill-[#D97706]" />
+                <span>Incoming Emergency Demand</span>
               </div>
-            )
-          ) : selectedHouse.type === "prosumer" ? (
-            // Solar Prosumer with normal grid
+              <div className="text-[11px] text-[#64748B] mb-2.5">
+                From <span className="font-bold text-[#1D1D1F]">{incomingPing.requester_code || `C-${incomingPing.requester_household_id}`}</span>: <span className="font-semibold text-[#1D1D1F]">{incomingPing.units_kwh} kWh</span> for <span className="font-semibold text-[#1D1D1F]">{incomingPing.total_price_eth} ETH</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => respondEnergyRequestAction(incomingPing.id, "accept", selectedHouse.householdId)}
+                  className="flex-1 py-1.5 rounded-lg bg-[#27845B] hover:bg-[#1E6948] text-white text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <Check className="w-3 h-3" />
+                  <span>Accept Ping</span>
+                </button>
+                <button
+                  onClick={() => respondEnergyRequestAction(incomingPing.id, "deny", selectedHouse.householdId)}
+                  className="flex-1 py-1.5 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Deny</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Context-Aware Action Triggers (F2 - Replaces misleading "Trade surplus energy" button) */}
+          {selectedHouse.type === "consumer" ? (
+            <button
+              onClick={() => {
+                setModalRequesterId(selectedHouse.householdId);
+                setIsRequestModalOpen(true);
+              }}
+              className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            >
+              <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+              <span>
+                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut"
+                  ? "Request Emergency Energy Backup →"
+                  : "Dispatch Energy Request →"}
+              </span>
+            </button>
+          ) : selectedHouse.powerState === "battery" ? (
+            <div className="w-full py-2 px-3 rounded-xl bg-[#D99A22]/10 border border-[#D99A22]/20 text-[#D99A22] text-xs font-mono flex items-center justify-center gap-2">
+              <BatteryCharging className="w-4 h-4" />
+              <span>Running on Solar &amp; Battery Backup</span>
+            </div>
+          ) : (
             <div className="w-full py-2 px-3 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-[#16A34A] text-xs font-mono flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
               <span>Grid Synchronized • Ready to Supply</span>
-            </div>
-          ) : (
-            // Consumer with normal grid
-            <div className="w-full py-2 px-3 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-[#16A34A] text-xs font-mono flex items-center justify-center gap-2">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Grid Connected (Normal Supply)</span>
             </div>
           )}
 
@@ -1778,6 +1883,139 @@ export default function NeighborhoodMicrogrid3D() {
         <span className="text-[#CBD5E1]">•</span>
         <span className="text-[#0284C7] font-semibold">Click: Inspect &amp; Cut Line</span>
       </div>
+
+      {/* ================= 3D VIEWPORT ENERGY REQUEST MODAL (M4) ================= */}
+      {isRequestModalOpen && modalRequesterId && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-[#CBD5E1] shadow-[0_24px_48px_rgba(0,0,0,0.2)] max-w-sm w-full p-6 relative font-sans">
+            <button
+              onClick={() => setIsRequestModalOpen(false)}
+              className="absolute top-5 right-5 text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#3A7D5C] animate-pulse" />
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#3A7D5C]">
+                Microgrid Dispatch
+              </span>
+            </div>
+            <h3 className="text-lg font-semibold text-[#1D1D1F] mb-1">
+              Request Energy Backup
+            </h3>
+            <p className="text-xs text-[#6E6E73] mb-4">
+              Dispatches emergency demand to the nearest prosumer with surplus battery capacity.
+            </p>
+
+            <form onSubmit={handleModalSubmit} className="space-y-3.5">
+              {/* Requester House Display */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-xs font-mono">
+                <span className="text-[#64748B]">Requester Node:</span>
+                <span className="font-bold text-[#1D1D1F]">
+                  Residence {HOUSES_CONFIG.find((h) => h.householdId === modalRequesterId)?.id} (Ausgrid #{modalRequesterId})
+                </span>
+              </div>
+
+              {/* Duration Horizon */}
+              <div>
+                <label className="block text-[11px] font-mono text-[#64748B] mb-1">
+                  Outage Horizon
+                </label>
+                <div className="grid grid-cols-3 gap-2 font-mono text-xs">
+                  {[2.0, 4.0, 8.0].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setModalDurationHours(h)}
+                      className={`py-1.5 rounded-xl border font-semibold transition cursor-pointer ${
+                        modalDurationHours === h
+                          ? "bg-[#1D1D1F] text-white border-[#1D1D1F]"
+                          : "bg-[#F8FAFC] text-[#64748B] border-[#D8D8DE] hover:bg-white"
+                      }`}
+                    >
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Energy Amount */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[11px] font-mono text-[#64748B]">
+                    Energy Required
+                  </label>
+                  {isEstimatingModal && (
+                    <span className="text-[10px] font-mono text-[#3A7D5C] animate-pulse">
+                      Estimating...
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.1"
+                    max="50.0"
+                    value={modalKwh}
+                    onChange={(e) => setModalKwh(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-[#D8D8DE] bg-white text-xs font-mono text-[#1D1D1F] focus:outline-none focus:ring-2 focus:ring-[#3A7D5C]/30 focus:border-[#3A7D5C]"
+                  />
+                  <span className="absolute right-3 top-2 text-xs font-mono text-[#94A3B8]">
+                    kWh
+                  </span>
+                </div>
+              </div>
+
+              {/* Settlement Fee */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-[11px] font-mono">
+                <span className="text-[#64748B]">Fixed Settlement:</span>
+                <span className="font-semibold text-[#1D1D1F]">0.000100 SepoliaETH</span>
+              </div>
+
+              {modalError && (
+                <div className="p-2 rounded-xl bg-[#DC2626]/10 border border-[#DC2626]/20 text-[#DC2626] text-xs font-mono">
+                  {modalError}
+                </div>
+              )}
+
+              {modalSuccessMsg && (
+                <div className="p-2 rounded-xl bg-[#3A7D5C]/10 border border-[#3A7D5C]/20 text-[#27845B] text-xs font-mono flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{modalSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
+              <div className="flex items-center gap-2 pt-1 font-mono text-xs">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl border border-[#D8D8DE] text-[#64748B] hover:text-[#1D1D1F] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingModal}
+                  className="flex-1 py-2 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] text-white font-medium transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSubmittingModal ? (
+                    <span>Pinging...</span>
+                  ) : (
+                    <>
+                      <Zap className="w-3.5 h-3.5 text-[#3A7D5C]" />
+                      <span>Ping Prosumer</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const { ethers } = require("ethers");
 require("dotenv").config();
 
@@ -638,6 +639,415 @@ app.post("/api/tick-sync", async (req, res) => {
     message: "Battery levels synced with tick telemetry",
     houseStatus: Array.from(inMemoryGridState.houseStatus.values())
   });
+});
+
+// =========================================================================
+// NEAREST-PROSUMER MATCHING ENGINE & ENERGY REQUESTS LIFECYCLE (M4)
+// =========================================================================
+
+// 3D Spatial coordinates matching HOUSES_CONFIG for Euclidean distance ranking
+const HOUSE_COORDINATES = {
+  18:  { x: -12.5, z: -4.5, id: "C1", type: "consumer" },
+  282: { x: -7.5,  z: -4.5, id: "P1", type: "prosumer" },
+  26:  { x: -2.5,  z: -4.5, id: "C2", type: "consumer" },
+  33:  { x: 2.5,   z: -4.5, id: "P2", type: "prosumer" },
+  48:  { x: 7.5,   z: -4.5, id: "C3", type: "consumer" },
+  212: { x: 12.5,  z: -4.5, id: "P3", type: "prosumer" },
+  55:  { x: -12.5, z: 4.5,  id: "P4", type: "prosumer" },
+  90:  { x: -7.5,  z: 4.5,  id: "C4", type: "consumer" },
+  244: { x: -2.5,  z: 4.5,  id: "P5", type: "prosumer" },
+  117: { x: 2.5,   z: 4.5,  id: "C5", type: "consumer" },
+  112: { x: 7.5,   z: 4.5,  id: "P6", type: "prosumer" },
+  141: { x: 12.5,  z: 4.5,  id: "C6", type: "consumer" },
+};
+
+function get3DDistanceBetween(idA, idB) {
+  const a = HOUSE_COORDINATES[Number(idA)];
+  const b = HOUSE_COORDINATES[Number(idB)];
+  if (!a || !b) return 999.0;
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+// In-memory requests store and configuration
+let autoAcceptRequests = true; // Auto-accept enabled with 2s network delay for seamless demo
+const inMemoryRequests = new Map();
+
+// Helper: Sync request status update to Supabase
+async function syncRequestToSupabase(req) {
+  if (!supabase) return;
+  try {
+    await supabase
+      .from("energy_requests")
+      .upsert({
+        id: req.id,
+        requester_household_id: req.requester_household_id,
+        units_kwh: req.units_kwh,
+        duration_hours: req.duration_hours,
+        price_eth_per_kwh: req.price_eth_per_kwh,
+        total_price_eth: req.total_price_eth,
+        status: req.status,
+        current_candidate_household_id: req.current_candidate_household_id,
+        candidates: req.candidates,
+        tx_hash: req.tx_hash || null,
+        created_at: req.created_at,
+        updated_at: req.updated_at
+      }, { onConflict: "id" });
+  } catch (err) {
+    console.warn("[Backend] Supabase syncRequest error:", err.message);
+  }
+}
+
+// Helper: Advance to next candidate prosumer on timeout or deny
+function advanceCandidate(reqId) {
+  const req = inMemoryRequests.get(reqId);
+  if (!req || (req.status !== "pinged" && req.status !== "open")) return;
+
+  if (req.pingTimer) clearTimeout(req.pingTimer);
+  if (req.autoAcceptTimer) clearTimeout(req.autoAcceptTimer);
+
+  const currentIndex = req.candidates.findIndex(
+    (c) => c.household_id === req.current_candidate_household_id
+  );
+  if (currentIndex >= 0 && req.candidates[currentIndex].status === "pinged") {
+    req.candidates[currentIndex].status = "timeout";
+  }
+
+  // Find next candidate with status === 'pending'
+  const nextCandidate = req.candidates.find((c) => c.status === "pending");
+  if (nextCandidate) {
+    nextCandidate.status = "pinged";
+    req.status = "pinged";
+    req.current_candidate_household_id = nextCandidate.household_id;
+    req.updated_at = new Date().toISOString();
+    console.log(`[Matching Engine] Request ${req.id} advanced to next nearest prosumer: ${nextCandidate.code} (#${nextCandidate.household_id})`);
+
+    // Schedule 30-second candidate timeout
+    req.pingTimer = setTimeout(() => {
+      advanceCandidate(req.id);
+    }, 30000);
+
+    // If auto-accept enabled, schedule 2-second simulated network delay
+    if (autoAcceptRequests) {
+      req.autoAcceptTimer = setTimeout(() => {
+        acceptCandidate(req.id, nextCandidate.household_id);
+      }, 2000);
+    }
+  } else {
+    // All candidates exhausted without acceptance
+    req.status = "unfulfilled";
+    req.current_candidate_household_id = null;
+    req.updated_at = new Date().toISOString();
+    console.log(`[Matching Engine] Request ${req.id} UNFULFILLED: All prosumer candidates exhausted.`);
+  }
+
+  syncRequestToSupabase(req);
+}
+
+// Helper: Mark candidate as accepted
+function acceptCandidate(reqId, candidateHouseholdId) {
+  const req = inMemoryRequests.get(reqId);
+  if (!req || req.status !== "pinged") return;
+  if (req.current_candidate_household_id !== candidateHouseholdId) return;
+
+  if (req.pingTimer) clearTimeout(req.pingTimer);
+  if (req.autoAcceptTimer) clearTimeout(req.autoAcceptTimer);
+
+  req.status = "accepted";
+  const cand = req.candidates.find((c) => c.household_id === candidateHouseholdId);
+  if (cand) cand.status = "accepted";
+  req.updated_at = new Date().toISOString();
+  console.log(`[Matching Engine] Request ${req.id} ACCEPTED by Prosumer ${cand ? cand.code : candidateHouseholdId}`);
+
+  syncRequestToSupabase(req);
+}
+
+// GET /api/backup/estimate (Proxies to Python data-api with deterministic microgrid fallback)
+app.get("/api/backup/estimate", async (req, res) => {
+  const hours = parseFloat(req.query.hours) || 4.0;
+
+  // 1. Try to fetch from FastAPI data-api
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const apiRes = await fetch(`http://localhost:8000/backup/estimate?hours=${hours}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      return res.json(data);
+    }
+  } catch (err) {
+    // data-api offline or timed out, proceed to fallback calculation
+  }
+
+  // 2. Realistic microgrid backup estimate fallback based on current house battery & load
+  const now = new Date();
+  const endsAt = new Date(now.getTime() + hours * 3600 * 1000);
+
+  const consumerBaseRates = {
+    18: 0.95,   // C1
+    26: 0.82,   // C2
+    48: 0.90,   // C3
+    90: 1.05,   // C4
+    117: 0.88,  // C5
+    141: 1.15   // C6
+  };
+
+  const needs = CONSUMER_HOUSEHOLD_IDS.map((cid) => {
+    const rate = consumerBaseRates[cid] || 0.95;
+    const needKwh = Number((rate * hours).toFixed(2));
+    return {
+      household_id: cid,
+      need_kwh: needKwh,
+      covered_kwh: needKwh,
+      shortfall_kwh: 0.0
+    };
+  });
+
+  const suppliers = SOLAR_HOUSE_IDS.map((sid) => {
+    const house = inMemoryGridState.houseStatus.get(sid);
+    const batt = house ? house.battery_kwh : 4.5;
+    const surplus = Number((batt + (hours >= 2 ? 0.8 : 0.4)).toFixed(2));
+    return {
+      household_id: sid,
+      surplus_kwh: surplus,
+      committed_kwh: 0.0
+    };
+  });
+
+  const allocations = [];
+  for (const n of needs) {
+    let remainingNeed = n.need_kwh;
+    const sortedSuppliers = [...suppliers].sort((a, b) => {
+      const distA = get3DDistanceBetween(n.household_id, a.household_id);
+      const distB = get3DDistanceBetween(n.household_id, b.household_id);
+      return distA - distB;
+    });
+
+    for (const s of sortedSuppliers) {
+      if (remainingNeed <= 0.01) break;
+      const available = s.surplus_kwh - s.committed_kwh;
+      if (available > 0.05) {
+        const give = Math.min(remainingNeed, available);
+        s.committed_kwh = Number((s.committed_kwh + give).toFixed(2));
+        remainingNeed = Number((remainingNeed - give).toFixed(2));
+        allocations.push({
+          from_household_id: s.household_id,
+          to_household_id: n.household_id,
+          kwh: Number(give.toFixed(2))
+        });
+      }
+    }
+    n.covered_kwh = Number((n.need_kwh - remainingNeed).toFixed(2));
+    n.shortfall_kwh = Number(remainingNeed.toFixed(2));
+  }
+
+  res.json({
+    hours,
+    outage_starts_at: now.toISOString(),
+    window_ends_at: endsAt.toISOString(),
+    needs,
+    suppliers,
+    allocations,
+    note: "Microgrid backup estimate computed using active battery reserves and solar surplus."
+  });
+});
+
+// GET /api/requests (Fetch all energy requests)
+app.get("/api/requests", async (req, res) => {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("energy_requests")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (!error && data) {
+        return res.json({ success: true, count: data.length, requests: data });
+      }
+    } catch (err) {
+      console.warn("[Backend] Supabase query requests error:", err.message);
+    }
+  }
+
+  const list = Array.from(inMemoryRequests.values())
+    .map(({ pingTimer, autoAcceptTimer, ...rest }) => rest)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  res.json({ success: true, count: list.length, requests: list });
+});
+
+// POST /api/requests (Create new energy request & trigger nearest-prosumer matching)
+app.post("/api/requests", async (req, res) => {
+  const {
+    requester_household_id,
+    units_kwh,
+    duration_hours = 4.0,
+    price_eth_per_kwh = 0.000100,
+    total_price_eth = 0.000100
+  } = req.body;
+
+  const requesterId = Number(requester_household_id);
+  const houseCfg = HOUSE_COORDINATES[requesterId];
+
+  if (!requesterId || !houseCfg) {
+    return res.status(400).json({ success: false, error: "Invalid requester household ID" });
+  }
+
+  const units = parseFloat(units_kwh);
+  if (!units || units <= 0) {
+    return res.status(400).json({ success: false, error: "Invalid energy amount requested (units_kwh > 0)" });
+  }
+
+  // 1. Rank eligible prosumers by 3D Euclidean distance
+  const candidates = [];
+  for (const sid of SOLAR_HOUSE_IDS) {
+    const house = inMemoryGridState.houseStatus.get(sid);
+    const powerState = house ? house.power_state : "battery";
+    const batteryKwh = house ? house.battery_kwh : 4.5;
+
+    // Filter out prosumers in blackout or empty battery
+    if (powerState === "blackout" || batteryKwh <= 0.2) continue;
+
+    const distance = get3DDistanceBetween(requesterId, sid);
+    candidates.push({
+      household_id: sid,
+      code: HOUSE_COORDINATES[sid]?.id || `P-${sid}`,
+      distance: Number(distance.toFixed(1)),
+      battery_kwh: batteryKwh,
+      status: "pending"
+    });
+  }
+
+  // Sort ascending by Euclidean distance (nearest prosumer first)
+  candidates.sort((a, b) => a.distance - b.distance);
+
+  const requestId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+
+  let initialStatus = "open";
+  let firstCandidateId = null;
+
+  if (candidates.length === 0) {
+    initialStatus = "unfulfilled";
+  } else {
+    initialStatus = "pinged";
+    candidates[0].status = "pinged";
+    firstCandidateId = candidates[0].household_id;
+  }
+
+  const newRequest = {
+    id: requestId,
+    requester_household_id: requesterId,
+    requester_code: houseCfg.id,
+    units_kwh: Number(units.toFixed(2)),
+    duration_hours: Number(duration_hours),
+    price_eth_per_kwh: Number(price_eth_per_kwh),
+    total_price_eth: Number(total_price_eth),
+    status: initialStatus,
+    current_candidate_household_id: firstCandidateId,
+    candidates,
+    tx_hash: null,
+    created_at: createdAt,
+    updated_at: createdAt
+  };
+
+  inMemoryRequests.set(requestId, newRequest);
+
+  if (firstCandidateId) {
+    console.log(`[Matching Engine] Request ${requestId} initiated by ${houseCfg.id} (#${requesterId}): Pinged nearest prosumer ${candidates[0].code} (#${firstCandidateId}, distance ${candidates[0].distance}m)`);
+
+    // 30-second ping timeout before advancing
+    newRequest.pingTimer = setTimeout(() => {
+      advanceCandidate(requestId);
+    }, 30000);
+
+    // If auto-accept enabled: 2-second simulated network delay
+    if (autoAcceptRequests) {
+      newRequest.autoAcceptTimer = setTimeout(() => {
+        acceptCandidate(requestId, firstCandidateId);
+      }, 2000);
+    }
+  }
+
+  await syncRequestToSupabase(newRequest);
+
+  const { pingTimer, autoAcceptTimer, ...responseBody } = newRequest;
+  res.status(201).json({
+    success: true,
+    message: firstCandidateId
+      ? `Request created and pinged to nearest prosumer ${candidates[0].code}`
+      : "Request created but unfulfilled (no eligible prosumer available)",
+    request: responseBody
+  });
+});
+
+// POST /api/requests/:id/respond (Candidate Prosumer accepts or denies request)
+app.post("/api/requests/:id/respond", async (req, res) => {
+  const { id } = req.params;
+  const { decision, household_id } = req.body;
+  const request = inMemoryRequests.get(id);
+
+  if (!request) {
+    return res.status(404).json({ success: false, error: "Energy request not found" });
+  }
+
+  if (request.status !== "pinged") {
+    return res.status(400).json({
+      success: false,
+      error: `Request is not in pinged state (current status: ${request.status})`
+    });
+  }
+
+  const candidateId = Number(household_id);
+  if (request.current_candidate_household_id !== candidateId) {
+    return res.status(400).json({
+      success: false,
+      error: "Household is not the currently pinged candidate"
+    });
+  }
+
+  if (decision === "accept") {
+    acceptCandidate(id, candidateId);
+    const { pingTimer, autoAcceptTimer, ...cleanReq } = request;
+    return res.json({
+      success: true,
+      message: `Request accepted by prosumer ${candidateId}`,
+      request: cleanReq
+    });
+  } else if (decision === "deny") {
+    if (request.pingTimer) clearTimeout(request.pingTimer);
+    if (request.autoAcceptTimer) clearTimeout(request.autoAcceptTimer);
+
+    const cand = request.candidates.find((c) => c.household_id === candidateId);
+    if (cand) cand.status = "denied";
+
+    advanceCandidate(id);
+    const { pingTimer, autoAcceptTimer, ...cleanReq } = request;
+    return res.json({
+      success: true,
+      message: `Request denied by household ${candidateId}, advancing to next candidate`,
+      request: cleanReq
+    });
+  } else {
+    return res.status(400).json({ success: false, error: "Invalid decision: must be 'accept' or 'deny'" });
+  }
+});
+
+// GET & POST /api/requests/admin/auto-accept (Toggle auto-accept network delay)
+app.get("/api/requests/admin/auto-accept", (req, res) => {
+  res.json({ autoAccept: autoAcceptRequests });
+});
+
+app.post("/api/requests/admin/auto-accept", (req, res) => {
+  const { autoAccept } = req.body;
+  if (typeof autoAccept === "boolean") {
+    autoAcceptRequests = autoAccept;
+  }
+  res.json({ success: true, autoAccept: autoAcceptRequests });
 });
 
 // GET Trade History

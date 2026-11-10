@@ -4,7 +4,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import Navbar from "./components/Navbar";
 import P2PTradingSimulator from "./components/P2PTradingSimulator";
-import TradeOrderBook from "./components/TradeOrderBook";
+import EnergyRequestsBoard from "./components/EnergyRequestsBoard";
 import ProjectExplanation from "./components/ProjectExplanation";
 import ForecastAnalytics from "./components/ForecastAnalytics";
 import LiveDashboard from "./components/LiveDashboard";
@@ -58,8 +58,8 @@ export default function Home() {
         {/* ================= INTERACTIVE DUAL-WALLET P2P TRANSACTION ================= */}
         <P2PTradingSimulator />
 
-        {/* ================= ORDER BOOK & TRADE EXECUTION (WEEKS 9 & 10) ================= */}
-        <TradeOrderBook />
+        {/* ================= P2P ENERGY REQUESTS & MATCHING ENGINE (WEEKS 9 & 10) ================= */}
+        <EnergyRequestsBoard />
 
         {/* ================= PROJECT EXPLANATION & ARCHITECTURE ================= */}
         <ProjectExplanation />

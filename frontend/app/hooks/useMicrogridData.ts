@@ -26,6 +26,30 @@ export interface HouseLiveState extends HouseConfig {
   lastUpdated?: string;
 }
 
+export interface EnergyRequestCandidate {
+  household_id: number;
+  code: string;
+  distance: number;
+  battery_kwh: number;
+  status: "pending" | "pinged" | "denied" | "timeout" | "accepted";
+}
+
+export interface EnergyRequest {
+  id: string;
+  requester_household_id: number;
+  requester_code?: string;
+  units_kwh: number;
+  duration_hours: number;
+  price_eth_per_kwh: number;
+  total_price_eth: number;
+  status: "open" | "pinged" | "accepted" | "settling" | "settled" | "denied" | "unfulfilled" | "cancelled";
+  current_candidate_household_id: number | null;
+  candidates: EnergyRequestCandidate[];
+  tx_hash?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Initial realistic baseline state for the 12 houses before live ticks arrive
 // House C6 (Household 141) starts with mock blackout to demonstrate consumer islanding
 const INITIAL_LIVE_STATE: HouseLiveState[] = HOUSES_CONFIG.map((cfg) => {
@@ -63,6 +87,7 @@ export function useMicrogridData() {
   const [isSocietyOutage, setIsSocietyOutage] = useState<boolean>(false);
   const [cutLines, setCutLines] = useState<number[]>([]);
   const [lastTickTime, setLastTickTime] = useState<string | null>(null);
+  const [energyRequests, setEnergyRequests] = useState<EnergyRequest[]>([]);
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
 
   const fetchLatestTelemetry = useCallback(async () => {
@@ -370,6 +395,101 @@ export function useMicrogridData() {
     }
   }, [isSocietyOutage]);
 
+  const fetchEnergyRequests = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/requests`, { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.requests)) {
+          setEnergyRequests(json.requests);
+          return;
+        }
+      }
+    } catch {
+      // Backend offline, fallback to Supabase
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    try {
+      const { data } = await supabase
+        .from("energy_requests")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (data) {
+        setEnergyRequests(data as EnergyRequest[]);
+      }
+    } catch {
+      // Supabase table or query error
+    }
+  }, []);
+
+  const createEnergyRequestAction = useCallback(
+    async (params: {
+      requesterHouseholdId: number;
+      unitsKwh: number;
+      durationHours?: number;
+      priceEth?: number;
+    }) => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/requests`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requester_household_id: params.requesterHouseholdId,
+            units_kwh: params.unitsKwh,
+            duration_hours: params.durationHours ?? 4.0,
+            total_price_eth: params.priceEth ?? 0.0001,
+          }),
+        });
+        const json = await res.json();
+        if (json.success && json.request) {
+          setEnergyRequests((prev) => [
+            json.request,
+            ...prev.filter((r) => r.id !== json.request.id),
+          ]);
+          return { success: true, request: json.request };
+        }
+        return { success: false, error: json.error || "Failed to create request" };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to connect to backend";
+        return { success: false, error: msg };
+      }
+    },
+    []
+  );
+
+  const respondEnergyRequestAction = useCallback(
+    async (requestId: string, decision: "accept" | "deny", householdId: number) => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/requests/${requestId}/respond`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decision, household_id: householdId }),
+        });
+        const json = await res.json();
+        if (json.success && json.request) {
+          setEnergyRequests((prev) =>
+            prev.map((r) => (r.id === json.request.id ? json.request : r))
+          );
+          return { success: true, request: json.request };
+        }
+        return { success: false, error: json.error || "Failed to respond to request" };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to connect to backend";
+        return { success: false, error: msg };
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    fetchEnergyRequests();
+    const interval = setInterval(fetchEnergyRequests, 5000);
+    return () => clearInterval(interval);
+  }, [fetchEnergyRequests]);
+
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !isSupabaseConfigured()) {
@@ -527,6 +647,25 @@ export function useMicrogridData() {
           );
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "energy_requests",
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            const row = payload.new as EnergyRequest;
+            setEnergyRequests((prev) => [row, ...prev.filter((r) => r.id !== row.id)]);
+          } else if (payload.eventType === "UPDATE") {
+            const row = payload.new as EnergyRequest;
+            setEnergyRequests((prev) =>
+              prev.map((r) => (r.id === row.id ? row : r))
+            );
+          }
+        }
+      )
       .subscribe((status) => {
         setIsLiveConnected(status === "SUBSCRIBED");
       });
@@ -546,6 +685,10 @@ export function useMicrogridData() {
     isSocietyOutage,
     cutLines,
     lastTickTime,
+    energyRequests,
+    createEnergyRequestAction,
+    respondEnergyRequestAction,
+    fetchEnergyRequests,
     triggerSocietyOutage,
     restoreSocietyGrid,
     cutLinesAction,
