@@ -3,6 +3,7 @@
 import React, { useState, useRef, useMemo, useEffect, Suspense } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import { 
   Zap, 
@@ -11,44 +12,35 @@ import {
   AlertTriangle,
   X,
   BatteryCharging,
-  SunMedium
+  SunMedium,
+  Activity,
+  Radio
 } from "lucide-react";
+import { HOUSES_CONFIG } from "../config/houses";
+import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
 
-// Types for House Data
-export interface HouseData {
-  id: string;
-  name: string;
-  type: "prosumer" | "consumer";
-  x: number;
-  z: number;
-  rotationY: number;
-  solarKwh: number;
-  usageKwh: number;
-  surplusKwh: number;
-  walletAddress: string;
-  isOutage?: boolean;
-}
+// Types for House Data (aliased to centralized HouseLiveState)
+export type HouseData = HouseLiveState;
 
-// Exactly 12 Houses: 6 Prosumer (P1-P6 with Solar) + 6 Consumer (C1-C6 without Solar)
-// Front Row (North): P1, C1, P2, C2, P3, C3 (facing South towards road: rotationY = 0)
-// Back Row (South): C4, P4, C5, P5, C6, P6 (facing North towards road: rotationY = Math.PI)
-export const NEIGHBORHOOD_HOUSES: HouseData[] = [
-  // Front / North Row (z = -4.5, facing South towards road: rotationY = 0)
-  { id: "P1", name: "Residence P1", type: "prosumer", x: -12.5, z: -4.5, rotationY: 0, solarKwh: 3.2, usageKwh: 0.8, surplusKwh: 2.4, walletAddress: "0x11A2...8F01" },
-  { id: "C1", name: "Residence C1", type: "consumer", x: -7.5,  z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 1.2, surplusKwh: -1.2, walletAddress: "0x22B3...4E12", isOutage: false },
-  { id: "P2", name: "Residence P2", type: "prosumer", x: -2.5,  z: -4.5, rotationY: 0, solarKwh: 2.8, usageKwh: 1.0, surplusKwh: 1.8, walletAddress: "0x33C4...9D23" },
-  { id: "C2", name: "Residence C2", type: "consumer", x: 2.5,   z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 2.0, surplusKwh: -2.0, walletAddress: "0x55E6...1B45" },
-  { id: "P3", name: "Residence P3 (Node Alpha)", type: "prosumer", x: 7.5, z: -4.5, rotationY: 0, solarKwh: 4.2, usageKwh: 1.1, surplusKwh: 3.1, walletAddress: "0x3C44...93BC" },
-  { id: "C3", name: "Residence C3", type: "consumer", x: 12.5,  z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 1.5, surplusKwh: -1.5, walletAddress: "0x66F7...7A56" },
-
-  // Back / South Row (z = 4.5, facing North towards road: rotationY = Math.PI)
-  { id: "C4", name: "Residence C4", type: "consumer", x: -12.5, z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.8, surplusKwh: -1.8, walletAddress: "0x77A8...3C67" },
-  { id: "P4", name: "Residence P4", type: "prosumer", x: -7.5,  z: 4.5, rotationY: Math.PI, solarKwh: 3.6, usageKwh: 0.9, surplusKwh: 2.7, walletAddress: "0x88B9...2E78" },
-  { id: "C5", name: "Residence C5", type: "consumer", x: -2.5,  z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.0, surplusKwh: -1.0, walletAddress: "0x99C0...9F89" },
-  { id: "P5", name: "Residence P5", type: "prosumer", x: 2.5,   z: 4.5, rotationY: Math.PI, solarKwh: 3.8, usageKwh: 0.8, surplusKwh: 3.0, walletAddress: "0xBBD2...6C01" },
-  { id: "C6", name: "Residence C6 (Node Beta)", type: "consumer", x: 7.5, z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.5, surplusKwh: -1.5, walletAddress: "0x71C7...976F", isOutage: true },
-  { id: "P6", name: "Residence P6", type: "prosumer", x: 12.5,  z: 4.5, rotationY: Math.PI, solarKwh: 3.2, usageKwh: 0.7, surplusKwh: 2.5, walletAddress: "0xCCE3...8D12" },
-];
+// Legacy export for backwards compatibility
+export const NEIGHBORHOOD_HOUSES: HouseData[] = HOUSES_CONFIG.map((cfg) => {
+  const isSolar = cfg.type === "prosumer";
+  const solarKwh = isSolar ? (cfg.id === "P3" ? 4.2 : 3.2) : 0.0;
+  const usageKwh = isSolar ? 1.0 : (cfg.id === "C6" ? 1.5 : 1.2);
+  const netKwh = Number((usageKwh - solarKwh).toFixed(2));
+  return {
+    ...cfg,
+    solarKwh,
+    usageKwh,
+    netKwh,
+    surplusKwh: -netKwh,
+    walletAddress: `0x${cfg.householdId.toString(16).padStart(4, "0")}...${cfg.householdId * 1111}`,
+    powerState: "grid",
+    batteryKwh: isSolar ? (cfg.initialBatteryKwh ?? 4.5) : 0,
+    batteryCapacityKwh: isSolar ? (cfg.batteryCapacityKwh ?? 6.0) : 0,
+    isOutage: cfg.id === "C6",
+  };
+});
 
 // Preload house.glb
 useGLTF.preload("/models/house.glb");
@@ -229,7 +221,12 @@ function House3D({
               ? "bg-[#D99A22]" 
               : "bg-[#5277D5]"
           }`} />
-          <span className="font-semibold">{house.id}</span>
+          <span className="font-semibold flex items-center gap-1">
+            <span>{house.id}</span>
+            <span className={`text-[9px] font-mono ${isSelected ? "text-zinc-400" : "text-[#6E6E73]"}`}>
+              #{house.householdId}
+            </span>
+          </span>
           <span className={`font-mono text-[10px] ${
             isSelected 
               ? "text-zinc-300"
@@ -237,7 +234,7 @@ function House3D({
               ? "text-[#27845B]" 
               : "text-[#D94F58]"
           }`}>
-            {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)}u` : `${house.surplusKwh.toFixed(1)}u`}
+            {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
           </span>
         </div>
       </Html>
@@ -898,14 +895,15 @@ function MicrogridEnergyFlow({
   const particlesRef = useRef<THREE.Points>(null!);
   const count = 90;
 
-  const [positions] = useMemo(() => {
+  const positions = useMemo(() => {
     const pos = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 36;
+      // Deterministic particle spread along the conduit line
+      pos[i * 3] = ((i * 17) % 36) - 18;
       pos[i * 3 + 1] = 0.12;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 4;
+      pos[i * 3 + 2] = (((i * 23) % 40) / 10) - 2;
     }
-    return [pos];
+    return pos;
   }, [count]);
 
   useFrame((_, delta) => {
@@ -998,7 +996,7 @@ function CameraController({
   controlsRef
 }: { 
   selectedHouse: HouseData | null; 
-  controlsRef: React.RefObject<any>;
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
@@ -1061,12 +1059,36 @@ function CameraController({
 // =========================================================================
 
 export default function NeighborhoodMicrogrid3D() {
-  const [houses, setHouses] = useState<HouseData[]>(NEIGHBORHOOD_HOUSES);
-  const [selectedHouse, setSelectedHouse] = useState<HouseData | null>(null);
+  const { houses, isLiveConnected, lastTickTime } = useMicrogridData();
+  const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
-  const controlsRef = useRef<any>(null);
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+
+  // Derive selected house from live state
+  const selectedHouse = useMemo(
+    () => houses.find((h) => h.id === selectedHouseId) || null,
+    [houses, selectedHouseId]
+  );
+
+  // Community aggregated metrics derived from the 12 houses
+  const totalGen = useMemo(
+    () => Number(houses.reduce((acc, h) => acc + h.solarKwh, 0).toFixed(1)),
+    [houses]
+  );
+  const totalLoad = useMemo(
+    () => Number(houses.reduce((acc, h) => acc + h.usageKwh, 0).toFixed(1)),
+    [houses]
+  );
+  const netSurplus = useMemo(
+    () => Number((totalGen - totalLoad).toFixed(1)),
+    [totalGen, totalLoad]
+  );
+  const selfSufficiency = useMemo(
+    () => (totalLoad > 0 ? Math.min(100, Number(((totalGen / totalLoad) * 100).toFixed(1))) : 100),
+    [totalGen, totalLoad]
+  );
 
   // Handle P2P Trade from selected house
   const handleInitiateTrade = () => {
@@ -1077,10 +1099,10 @@ export default function NeighborhoodMicrogrid3D() {
 
     if (selectedHouse.type === "prosumer") {
       sourceHouse = selectedHouse;
-      targetHouse = houses.find((h) => h.type === "consumer" && h.isOutage) || houses[9]; // C6
+      targetHouse = houses.find((h) => h.type === "consumer" && h.isOutage) || houses[11]; // C6
     } else {
       targetHouse = selectedHouse;
-      sourceHouse = houses.find((h) => h.type === "prosumer" && h.surplusKwh > 1.5) || houses[3]; // P3
+      sourceHouse = houses.find((h) => h.type === "prosumer" && h.surplusKwh > 1.5) || houses[5]; // P3
     }
 
     setActiveTrade({ from: sourceHouse.id, to: targetHouse.id });
@@ -1088,18 +1110,6 @@ export default function NeighborhoodMicrogrid3D() {
 
     setTimeout(() => {
       setTradeSuccess(true);
-      // Update local house stats
-      setHouses((prev) =>
-        prev.map((h) => {
-          if (h.id === sourceHouse.id) {
-            return { ...h, surplusKwh: Math.max(0, Number((h.surplusKwh - 1.5).toFixed(1))) };
-          }
-          if (h.id === targetHouse.id) {
-            return { ...h, isOutage: false, usageKwh: Math.max(0, Number((h.usageKwh - 1.5).toFixed(1))), surplusKwh: Math.min(0, Number((h.surplusKwh + 1.5).toFixed(1))) };
-          }
-          return h;
-        })
-      );
     }, 2200);
   };
 
@@ -1161,7 +1171,7 @@ export default function NeighborhoodMicrogrid3D() {
               house={house}
               isSelected={selectedHouse?.id === house.id}
               isHovered={hoveredHouseId === house.id}
-              onSelect={() => setSelectedHouse(house)}
+              onSelect={() => setSelectedHouseId(house.id)}
               onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
             />
           ))}
@@ -1195,8 +1205,13 @@ export default function NeighborhoodMicrogrid3D() {
               Community Microgrid Topology
             </div>
             <div className="text-xs font-semibold text-[#1E293B] flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#16A34A] animate-pulse" />
-              <span>12 Residential Nodes • Bounded Microgrid (1 Unit = 1 kWh)</span>
+              <span className={`w-2 h-2 rounded-full ${isLiveConnected ? "bg-[#16A34A] animate-pulse" : "bg-[#D99A22]"}`} />
+              <span>12 Residential Nodes • {isLiveConnected ? "Supabase Realtime Live" : "Microgrid Synchronous Baseline"}</span>
+              {lastTickTime && (
+                <span className="text-[10px] font-mono text-[#64748B] hidden md:inline">
+                  [{new Date(lastTickTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}]
+                </span>
+              )}
             </div>
           </div>
 
@@ -1206,20 +1221,22 @@ export default function NeighborhoodMicrogrid3D() {
           <div className="flex items-center gap-5 text-xs font-mono">
             <div>
               <span className="text-[10px] text-[#64748B] block">Generation</span>
-              <span className="font-semibold text-[#D97706] tabular-nums">20.8 units</span>
+              <span className="font-semibold text-[#D97706] tabular-nums">{totalGen} kWh</span>
             </div>
             <div>
               <span className="text-[10px] text-[#64748B] block">Load</span>
-              <span className="font-semibold text-[#1E293B] tabular-nums">14.3 units</span>
+              <span className="font-semibold text-[#1E293B] tabular-nums">{totalLoad} kWh</span>
             </div>
             <div>
-              <span className="text-[10px] text-[#64748B] block">Net Surplus</span>
-              <span className="font-semibold text-[#16A34A] tabular-nums">+6.5 units</span>
+              <span className="text-[10px] text-[#64748B] block">Net Balance</span>
+              <span className={`font-semibold tabular-nums ${netSurplus >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
+                {netSurplus >= 0 ? `+${netSurplus}` : netSurplus} kWh
+              </span>
             </div>
             <div className="hidden lg:block">
               <span className="text-[10px] text-[#64748B] block">Self-Sufficiency</span>
               <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20">
-                99.1%
+                {selfSufficiency}%
               </span>
             </div>
           </div>
@@ -1228,7 +1245,7 @@ export default function NeighborhoodMicrogrid3D() {
         {selectedHouse && (
           <button
             onClick={() => {
-              setSelectedHouse(null);
+              setSelectedHouseId(null);
               setActiveTrade(null);
               setTradeSuccess(false);
             }}
@@ -1251,6 +1268,9 @@ export default function NeighborhoodMicrogrid3D() {
                 <span className="text-xs font-mono font-bold text-[#1E293B] px-2 py-0.5 rounded bg-[#F1F5F9] border border-[#CBD5E1]">
                   {selectedHouse.id}
                 </span>
+                <span className="text-[10px] font-mono text-[#64748B] px-1.5 py-0.5 rounded bg-white border border-[#CBD5E1]">
+                  Ausgrid #{selectedHouse.householdId}
+                </span>
                 <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
                   selectedHouse.type === "prosumer" 
                     ? "bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20"
@@ -1258,13 +1278,18 @@ export default function NeighborhoodMicrogrid3D() {
                 }`}>
                   {selectedHouse.type}
                 </span>
+                {selectedHouse.isShowcase && (
+                  <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#5277D5]/10 text-[#5277D5] border border-[#5277D5]/20">
+                    Demo Node
+                  </span>
+                )}
               </div>
               <h3 className="text-base font-semibold text-[#1E293B] mt-1.5">
                 {selectedHouse.name}
               </h3>
             </div>
             <button
-              onClick={() => setSelectedHouse(null)}
+              onClick={() => setSelectedHouseId(null)}
               className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition"
               title="Close panel"
             >
@@ -1276,32 +1301,40 @@ export default function NeighborhoodMicrogrid3D() {
           <div className="space-y-2 text-xs font-mono mb-4 bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0]">
             <div className="flex justify-between items-center">
               <span className="text-[#64748B]">Generated Energy</span>
-              <span className="text-[#D97706] font-semibold tabular-nums">{selectedHouse.solarKwh.toFixed(1)} units</span>
+              <span className="text-[#D97706] font-semibold tabular-nums">{selectedHouse.solarKwh.toFixed(2)} kWh</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[#64748B]">Consumed Energy</span>
-              <span className="text-[#1E293B] font-semibold tabular-nums">{selectedHouse.usageKwh.toFixed(1)} units</span>
+              <span className="text-[#1E293B] font-semibold tabular-nums">{selectedHouse.usageKwh.toFixed(2)} kWh</span>
             </div>
             <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-2 font-bold">
-              <span className="text-[#1E293B]">Net Surplus</span>
+              <span className="text-[#1E293B]">Net Balance</span>
               <span className={`tabular-nums ${selectedHouse.surplusKwh >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
-                {selectedHouse.surplusKwh >= 0 ? `+${selectedHouse.surplusKwh.toFixed(1)}` : selectedHouse.surplusKwh.toFixed(1)} units
+                {selectedHouse.surplusKwh >= 0 ? `+${selectedHouse.surplusKwh.toFixed(2)} kWh surplus` : `${selectedHouse.surplusKwh.toFixed(2)} kWh deficit`}
               </span>
             </div>
+            {selectedHouse.predictedConsumptionKwh !== undefined && (
+              <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-1.5 text-[10px] text-[#64748B]">
+                <span>Next-Tick Forecast:</span>
+                <span className="font-semibold text-[#5277D5]">
+                  {selectedHouse.predictedConsumptionKwh.toFixed(2)} kWh need
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Outage status alert if any */}
           {selectedHouse.isOutage && (
             <div className="mb-3.5 p-2.5 rounded-xl bg-[#E11D48]/10 border border-[#E11D48]/20 text-xs text-[#E11D48] flex items-center gap-2 font-mono">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>Grid outage active (1.5 units deficit)</span>
+              <span>Grid outage active (1.5 kWh deficit)</span>
             </div>
           )}
 
           {/* Wallet Address */}
           <div className="text-[11px] font-mono text-[#64748B] mb-4 flex items-center justify-between">
             <span>Node Address:</span>
-            <span className="text-[#1E293B] bg-white px-2 py-0.5 rounded border border-[#CBD5E1]">
+            <span className="text-[#1E293B] bg-white px-2 py-0.5 rounded border border-[#CBD5E1] truncate max-w-[190px]" title={selectedHouse.walletAddress}>
               {selectedHouse.walletAddress}
             </span>
           </div>
@@ -1320,7 +1353,7 @@ export default function NeighborhoodMicrogrid3D() {
           {tradeSuccess && (
             <div className="mt-2.5 p-2 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-xs font-mono text-[#16A34A] flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>1.5 units dispatched via smart escrow</span>
+              <span>1.5 kWh dispatched via smart escrow</span>
             </div>
           )}
         </div>
