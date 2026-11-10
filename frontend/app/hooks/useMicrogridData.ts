@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import {
   HOUSES_CONFIG,
   HouseConfig,
@@ -96,7 +96,7 @@ async function safeParseJson(res: Response) {
   }
 }
 
-export function useMicrogridData() {
+function useMicrogridDataHookInternal() {
   const [houses, setHouses] = useState<HouseLiveState[]>(INITIAL_LIVE_STATE);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
   const [isSocietyOutage, setIsSocietyOutage] = useState<boolean>(false);
@@ -849,6 +849,14 @@ export function useMicrogridData() {
     };
   }, [fetchLatestTelemetry]);
 
+  // Periodic fallback telemetry sync with backend status endpoint (keeps outage and auto-accept 100% in sync)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchLatestTelemetry();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [fetchLatestTelemetry]);
+
   return {
     houses,
     setHouses,
@@ -870,4 +878,21 @@ export function useMicrogridData() {
     restoreLinesAction,
     refetch: fetchLatestTelemetry,
   };
+}
+
+export type MicrogridContextType = ReturnType<typeof useMicrogridDataHookInternal>;
+
+const MicrogridDataContext = createContext<MicrogridContextType | null>(null);
+
+export function MicrogridDataProvider({ children }: { children: React.ReactNode }) {
+  const data = useMicrogridDataHookInternal();
+  return React.createElement(MicrogridDataContext.Provider, { value: data }, children);
+}
+
+export function useMicrogridData(): MicrogridContextType {
+  const context = useContext(MicrogridDataContext);
+  if (context) {
+    return context;
+  }
+  return useMicrogridDataHookInternal();
 }

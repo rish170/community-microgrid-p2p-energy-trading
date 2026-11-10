@@ -121,6 +121,47 @@ function HouseRooftopSolar({ isSelected, isBlackout = false }: { isSelected: boo
   );
 }
 
+// Solid colonial porch stairs that connect porch down to the ground/walkway without mid-air floating gaps (Images 1-3)
+function HouseFrontStairs() {
+  const steps = [
+    { y: 0.38, z: 0.98, depth: 0.12 },
+    { y: 0.29, z: 1.08, depth: 0.12 },
+    { y: 0.20, z: 1.18, depth: 0.12 },
+    { y: 0.11, z: 1.28, depth: 0.12 },
+    { y: 0.035, z: 1.38, depth: 0.14 },
+  ];
+
+  return (
+    <group position={[0, 0, 0]}>
+      {/* Solid Staircase White Side Stringers */}
+      <mesh position={[-0.37, 0.21, 1.18]} castShadow receiveShadow>
+        <boxGeometry args={[0.04, 0.44, 0.52]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.4} />
+      </mesh>
+      <mesh position={[0.37, 0.21, 1.18]} castShadow receiveShadow>
+        <boxGeometry args={[0.04, 0.44, 0.52]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.4} />
+      </mesh>
+
+      {/* Solid Step Risers & Handsome Wooden Treads Touching Ground */}
+      {steps.map((st, idx) => (
+        <group key={idx}>
+          {/* White Riser & Foundation Block extending solidly to ground */}
+          <mesh position={[0, st.y / 2, st.z]} receiveShadow castShadow>
+            <boxGeometry args={[0.70, st.y, st.depth]} />
+            <meshStandardMaterial color="#F1F5F9" roughness={0.5} />
+          </mesh>
+          {/* Solid Wooden Tread Plank */}
+          <mesh position={[0, st.y + 0.012, st.z]} receiveShadow castShadow>
+            <boxGeometry args={[0.74, 0.024, st.depth + 0.02]} />
+            <meshStandardMaterial color="#B58D57" roughness={0.65} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 // 3D House Component rendering house.glb for all 12 houses with Minecraft Voxel base
 function House3D({ 
   house, 
@@ -256,6 +297,9 @@ function House3D({
       <group position={[0, yOffset, 0]} scale={[scale, scale, scale]}>
         <primitive object={clonedScene} />
       </group>
+
+      {/* Solid Front Porch Steps Ground-Touchdown (Images 1-3) */}
+      <HouseFrontStairs />
 
       {/* PROSUMERS (P1 to P6): Rooftop Solar PV Installation */}
       {/* CONSUMERS (C1 to C6): Standard clean roof */}
@@ -900,19 +944,20 @@ const MicrogridCommunityInfrastructure = memo(function MicrogridCommunityInfrast
 
         {/* Elevated Tilted Solar Array Canopy */}
         <group position={[0, 2.85, 0]} rotation={[0.15, 0, 0]}>
+          {/* Canopy Mounting Frame */}
           <mesh castShadow receiveShadow>
             <boxGeometry args={[5.2, 0.12, 4.4]} />
-            <meshStandardMaterial color="#0F172A" metalness={0.85} roughness={0.2} />
+            <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.3} />
           </mesh>
-          {/* Photovoltaic Cells Active Surface */}
-          <mesh position={[0, 0.08, 0]}>
-            <planeGeometry args={[4.9, 4.1]} />
+          {/* Photovoltaic Solar Modules Surface (Flush on deck, no perpendicular standing layer) */}
+          <mesh position={[0, 0.065, 0]} castShadow receiveShadow>
+            <boxGeometry args={[4.95, 0.02, 4.15]} />
             <meshStandardMaterial 
-              color="#0284C7" 
-              metalness={0.9} 
-              roughness={0.15} 
-              emissive="#0369A1" 
-              emissiveIntensity={0.3} 
+              color="#0F172A" 
+              metalness={0.85} 
+              roughness={0.2} 
+              emissive="#1E3A8A" 
+              emissiveIntensity={0.22} 
             />
           </mesh>
         </group>

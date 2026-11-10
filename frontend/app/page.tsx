@@ -2,6 +2,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import { MicrogridDataProvider } from "./hooks/useMicrogridData";
 import Navbar from "./components/Navbar";
 import P2PTradingSimulator from "./components/P2PTradingSimulator";
 import EnergyRequestsBoard from "./components/EnergyRequestsBoard";
@@ -19,12 +20,13 @@ const NeighborhoodMicrogrid3D = dynamic(
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col bg-[#F5F5F7] text-[#1D1D1F] selection:bg-[#3A7D5C]/20 selection:text-[#1D1D1F]">
-      {/* Sticky Navigation */}
-      <Navbar />
+    <MicrogridDataProvider>
+      <div className="min-h-screen flex flex-col bg-[#F5F5F7] text-[#1D1D1F] selection:bg-[#3A7D5C]/20 selection:text-[#1D1D1F]">
+        {/* Sticky Navigation */}
+        <Navbar />
 
-      {/* Main Experience */}
-      <main className="flex-1">
+        {/* Main Experience */}
+        <main className="flex-1">
         
         {/* ================= OPENING EXPERIENCE: 12-HOUSE 3D RESIDENTIAL MICROGRID ================= */}
         <section className="relative w-full h-[92vh] border-b border-[#D8D8DE] bg-[#F5F5F7]">
@@ -78,5 +80,6 @@ export default function Home() {
       {/* Footer */}
       <Footer />
     </div>
-  );
+  </MicrogridDataProvider>
+);
 }
