@@ -363,42 +363,60 @@ function House3D({
       {/* Floating Overhead Badge: Clean Light Theme (P6 | +3.6 kWh) */}
       {showBadge && (
         <Html position={[0, 2.5, 0]} center distanceFactor={24} zIndexRange={[1, 10]}>
-          <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
+          <div className={`px-2.5 py-1.5 rounded-full text-xs font-sans tracking-tight pointer-events-none transition-all flex items-center gap-2 whitespace-nowrap backdrop-blur-md leading-none select-none ${
             isLineCutActive
               ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
               : isBlackout
               ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
               : isOnBattery
-              ? "bg-[#1A1404]/95 text-[#FEF08A] border border-[#F59E0B]/60 shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
+              ? "bg-[#1A1404]/95 text-[#FEF08A] border-2 border-[#F59E0B] shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
               : isSelected 
               ? "bg-white/95 text-[#1D1D1F] border border-[#5277D5] shadow-[0_4px_16px_rgba(82,119,213,0.25)] ring-2 ring-[#5277D5] font-semibold"
               : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
           }`}>
-            <span className={`font-semibold ${isLineCutActive ? "text-[#FDE68A]" : isBlackout ? "text-[#FECDD3]" : "text-[#1D1D1F]"}`}>
+            <span className={`font-semibold text-xs leading-none ${
+              isLineCutActive 
+                ? "text-[#FDE68A]" 
+                : isBlackout 
+                ? "text-[#FECDD3]" 
+                : isOnBattery 
+                ? "text-[#FEF08A]" 
+                : "text-[#1D1D1F]"
+            }`}>
               {house.id}
             </span>
 
-            <span className={`mx-0.5 font-light ${isLineCutActive ? "text-[#D97706]/50" : isBlackout ? "text-[#E11D48]/50" : "text-[#CBD5E1]"}`}>
-              |
-            </span>
+            {/* Crisp vertical separator bar: perfectly middle-aligned and darker */}
+            <span 
+              className={`w-[1.5px] h-3 rounded-full shrink-0 ${
+                isLineCutActive 
+                  ? "bg-[#FDE68A]/60" 
+                  : isBlackout 
+                  ? "bg-[#FECDD3]/60" 
+                  : isOnBattery 
+                  ? "bg-[#FEF08A]/60" 
+                  : "bg-[#475569]"
+              }`} 
+              aria-hidden="true"
+            />
 
             {isLineCutActive ? (
-              <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider">
+              <span className="font-mono text-xs leading-none text-[#FDE68A] font-bold uppercase tracking-wider">
                 Line Cut
               </span>
             ) : isBlackout ? (
-              <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider">
+              <span className="font-mono text-xs leading-none text-[#FDA4AF] font-bold uppercase tracking-wider">
                 Blackout
               </span>
             ) : isOnBattery ? (
-              <span className="font-mono text-[10px] text-[#FDE047] font-semibold">
+              <span className="font-mono text-xs leading-none text-[#FDE047] font-semibold tabular-nums">
                 {house.batteryKwh.toFixed(1)} kWh
               </span>
             ) : (
-              <span className={`font-mono text-[10px] ${
+              <span className={`font-mono text-xs leading-none tabular-nums font-medium ${
                 house.surplusKwh >= 0 
-                  ? "text-[#27845B]" 
-                  : "text-[#D94F58]"
+                  ? "text-[#16A34A]" 
+                  : "text-[#DC2626]"
               }`}>
                 {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
               </span>
