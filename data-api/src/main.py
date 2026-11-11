@@ -100,9 +100,26 @@ def build_engine() -> ReplayEngine:
         logger.warning("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set -- using DryRunSink (logs only)")
         sink = DryRunSink()
 
+    # ID Guard (4a): check Supabase households where in_live_sim = true
+    supabase_live_ids = sink.fetch_live_household_ids()
+    ids_match: bool | None = None
+    if supabase_live_ids is not None:
+        ids_match = (sorted(live_ids) == sorted(supabase_live_ids))
+        if not ids_match:
+            diff_extra = sorted(set(supabase_live_ids) - set(live_ids))
+            diff_missing = sorted(set(live_ids) - set(supabase_live_ids))
+            logger.warning(
+                "ID MISMATCH WARNING: Engine replayed households %s do not match Supabase in_live_sim households %s! "
+                "(Extra in Supabase: %s, Missing in Supabase: %s)",
+                live_ids, supabase_live_ids, diff_extra, diff_missing
+            )
+        else:
+            logger.info("ID Guard: Engine households exactly match Supabase households (in_live_sim=true).")
+
     return ReplayEngine(
         data=df_live, models_dir=models_dir, sink=sink,
         start_time=start_time, end_time=end_time, household_categories=all_ids,
+        supabase_live_ids=supabase_live_ids, ids_match=ids_match,
     )
 
 
@@ -200,6 +217,8 @@ def status():
         "current_sim_time": engine.current_time.isoformat() if engine else None,
         "end_time": engine.end_time.isoformat() if engine and engine.end_time is not None else None,
         "households": engine.household_ids if engine else [],
+        "supabase_live_ids": engine.supabase_live_ids if engine else None,
+        "ids_match": engine.ids_match if engine else None,
     }
 
 
