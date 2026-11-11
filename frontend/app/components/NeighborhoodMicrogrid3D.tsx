@@ -184,8 +184,8 @@ function House3D({
   const isProsumer = house.type === "prosumer";
   const isLineCutActive = isLineCut || house.powerState === "line_cut";
   // Consumers without line enter blackout; prosumers run on islanded battery/solar
-  const isBlackout = house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
-  const isOnBattery = house.powerState === "battery" || (isProsumer && isLineCutActive);
+  const isBlackout = (!isProsumer && house.powerState !== "grid") || house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
+  const isOnBattery = isProsumer && (house.powerState === "battery" || isLineCutActive);
 
   // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
@@ -1728,7 +1728,7 @@ export default function NeighborhoodMicrogrid3D() {
             </h3>
             <div className="flex items-center gap-2">
               <span className={`text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
-                selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                selectedHouse.powerState === "blackout" || selectedHouse.isOutage || (selectedHouse.type === "consumer" && selectedHouse.powerState !== "grid")
                   ? "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
                   : selectedHouse.powerState === "line_cut"
                   ? "bg-[#D97706]/10 text-[#D97706] border-[#D97706]/20"
@@ -1736,7 +1736,7 @@ export default function NeighborhoodMicrogrid3D() {
                   ? "bg-[#D99A22]/10 text-[#D99A22] border-[#D99A22]/20"
                   : "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
               }`}>
-                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || (selectedHouse.type === "consumer" && selectedHouse.powerState !== "grid")
                   ? "Blackout"
                   : selectedHouse.powerState === "line_cut"
                   ? "Line Cut"

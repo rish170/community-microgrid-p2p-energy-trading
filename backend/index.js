@@ -44,14 +44,25 @@ if (supabaseUrl && supabaseServiceKey) {
       try {
         const { data: activeEvents } = await supabase
           .from("grid_events")
-          .select("id")
+          .select("id, scope")
           .is("ended_at", null);
         if (!activeEvents || activeEvents.length === 0) {
           await supabase
             .from("house_status")
-            .update({ power_state: "grid" })
-            .eq("power_state", "blackout");
-          console.log("[Backend] Initialized house_status to nominal grid (cleared stale blackouts).");
+            .update({ power_state: "grid", is_supplied_by_trade: false })
+            .in("household_id", ALL_HOUSE_IDS);
+          console.log("[Backend] Initialized house_status to nominal grid (cleared stale blackouts/trades).");
+        } else {
+          // If society outage is currently active, ensure all consumer houses are set to blackout
+          const isSociety = activeEvents.some((e) => e.scope === "society");
+          if (isSociety) {
+            inMemoryGridState.isSocietyOutage = true;
+            await supabase
+              .from("house_status")
+              .update({ power_state: "blackout", is_supplied_by_trade: false })
+              .in("household_id", CONSUMER_HOUSE_IDS);
+            console.log("[Backend] Outage active: synchronized consumer houses to blackout in house_status.");
+          }
         }
       } catch (err) {
         console.warn("[Backend] Startup house_status check note:", err.message);
@@ -372,9 +383,18 @@ app.get("/api/status", async (req, res) => {
         .in("household_id", ALL_HOUSE_IDS);
 
       if (statusData && statusData.length > 0) {
-        houses = statusData;
+        houses = statusData.map((row) => {
+          if (isSocietyOutage && CONSUMER_HOUSE_IDS.includes(row.household_id)) {
+            return {
+              ...row,
+              power_state: "blackout",
+              is_supplied_by_trade: false
+            };
+          }
+          return row;
+        });
         // Sync in-memory map
-        for (const row of statusData) {
+        for (const row of houses) {
           inMemoryGridState.houseStatus.set(row.household_id, row);
         }
       }
@@ -403,11 +423,12 @@ app.post("/api/outage", async (req, res) => {
   };
 
   // Update in-memory statuses:
-  // Non-solar houses enter Blackout; solar houses switch to On Battery (or Blackout if empty)
+  // Non-solar houses strictly enter Blackout; solar houses switch to On Battery (or Blackout if empty)
   for (const [id, house] of inMemoryGridState.houseStatus.entries()) {
     const isSolar = SOLAR_HOUSE_IDS.includes(id);
     if (!isSolar) {
-      house.power_state = house.is_supplied_by_trade ? "battery" : "blackout";
+      house.power_state = "blackout";
+      house.is_supplied_by_trade = false;
     } else {
       house.power_state = house.battery_kwh > 0 ? "battery" : "blackout";
     }

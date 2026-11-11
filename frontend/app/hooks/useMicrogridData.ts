@@ -175,18 +175,34 @@ function useMicrogridDataHookInternal() {
             cutLinesRef.current = parsedCutLines;
           }
           if (Array.isArray(json.houses) && json.houses.length > 0) {
+            const isOutage = typeof json.isSocietyOutage === "boolean" ? json.isSocietyOutage : isSocietyOutageRef.current;
+            const currentCutLines = Array.isArray(json.cutLines) ? json.cutLines.map(Number) : cutLinesRef.current;
+
             setHouses((prev) =>
               prev.map((h) => {
                 const remote = json.houses.find(
                   (r: { household_id: number }) => r.household_id === h.householdId
                 );
                 if (!remote) return h;
-                const pState = remote.power_state as HouseLiveState["powerState"];
+                let pState = remote.power_state as HouseLiveState["powerState"];
+                const remoteBattery = Number(remote.battery_kwh ?? h.batteryKwh);
+                const remoteCapacity = Number(remote.battery_capacity_kwh ?? h.batteryCapacityKwh);
+
+                if (isOutage) {
+                  pState = h.type === "prosumer"
+                    ? (remoteBattery > 0 ? "battery" : "blackout")
+                    : "blackout";
+                } else if (currentCutLines.includes(h.householdId)) {
+                  pState = "line_cut";
+                } else if (pState === "blackout" || pState === "line_cut") {
+                  pState = "grid";
+                }
+
                 return {
                   ...h,
                   powerState: pState,
-                  batteryKwh: Number(remote.battery_kwh ?? h.batteryKwh),
-                  batteryCapacityKwh: Number(remote.battery_capacity_kwh ?? h.batteryCapacityKwh),
+                  batteryKwh: remoteBattery,
+                  batteryCapacityKwh: remoteCapacity,
                   isOutage: pState === "blackout" || pState === "line_cut",
                 };
               })
