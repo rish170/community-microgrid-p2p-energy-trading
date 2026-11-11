@@ -6,6 +6,7 @@ import {
   HouseConfig,
   ALL_LIVE_HOUSEHOLD_IDS,
   SOLAR_HOUSEHOLD_IDS,
+  CONSUMER_HOUSEHOLD_IDS,
 } from "../config/houses";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "../lib/supabase";
 
@@ -166,9 +167,12 @@ function useMicrogridDataHookInternal() {
         if (json.success) {
           if (typeof json.isSocietyOutage === "boolean") {
             setIsSocietyOutage(json.isSocietyOutage);
+            isSocietyOutageRef.current = json.isSocietyOutage;
           }
           if (Array.isArray(json.cutLines)) {
-            setCutLines(json.cutLines.map(Number));
+            const parsedCutLines = json.cutLines.map(Number);
+            setCutLines(parsedCutLines);
+            cutLinesRef.current = parsedCutLines;
           }
           if (Array.isArray(json.houses) && json.houses.length > 0) {
             setHouses((prev) =>
@@ -209,6 +213,7 @@ function useMicrogridDataHookInternal() {
 
       if (eventData && eventData.length > 0) {
         setIsSocietyOutage(true);
+        isSocietyOutageRef.current = true;
       }
 
       // Check active line cut events in Supabase
@@ -220,7 +225,9 @@ function useMicrogridDataHookInternal() {
         .is("ended_at", null);
 
       if (cutEvents) {
-        setCutLines(cutEvents.map((e) => Number(e.household_id)).filter(Boolean));
+        const cutIds = cutEvents.map((e) => Number(e.household_id)).filter(Boolean);
+        setCutLines(cutIds);
+        cutLinesRef.current = cutIds;
       }
 
       // 3. Fetch persistent house status from Supabase
@@ -284,12 +291,21 @@ function useMicrogridDataHookInternal() {
             ? (statusRow.power_state as HouseLiveState["powerState"]) 
             : h.powerState;
 
-          // Robustness safeguard against stale database blackout rows:
-          // If no society outage is active and this house's individual feed line is not cut,
-          // ensure powerState is nominal grid (prevents oscillation on C6 / household 141)
-          const isHouseLineCut = cutLines.includes(h.householdId);
-          if (powerState === "blackout" && !isSocietyOutage && !isHouseLineCut) {
-            powerState = "grid";
+          const isOutageActive = isSocietyOutageRef.current;
+          const activeCutLines = cutLinesRef.current;
+
+          // Deterministic state computation prevents loop flipping and glitches
+          if (isOutageActive) {
+            powerState = h.type === "prosumer"
+              ? (h.batteryKwh > 0 ? "battery" : "blackout")
+              : "blackout";
+          } else if (activeCutLines.includes(h.householdId)) {
+            powerState = "line_cut";
+          } else {
+            // Normal grid operation: cannot be blackout unless line cut or outage is active
+            if (powerState === "blackout" || powerState === "line_cut") {
+              powerState = "grid";
+            }
           }
 
           const batteryKwh = statusRow ? Number(statusRow.battery_kwh) : h.batteryKwh;
@@ -324,6 +340,7 @@ function useMicrogridDataHookInternal() {
   // Trigger Society-Wide Grid Outage
   const triggerSocietyOutage = useCallback(async () => {
     setIsSocietyOutage(true);
+    isSocietyOutageRef.current = true;
     setHouses((prev) =>
       prev.map((h) => {
         const isSolar = h.type === "prosumer";
@@ -333,7 +350,7 @@ function useMicrogridDataHookInternal() {
         return {
           ...h,
           powerState,
-          isOutage: powerState === "blackout",
+          isOutage: true,
         };
       })
     );
@@ -356,12 +373,17 @@ function useMicrogridDataHookInternal() {
   // Restore Society-Wide Grid
   const restoreSocietyGrid = useCallback(async () => {
     setIsSocietyOutage(false);
+    isSocietyOutageRef.current = false;
+    const activeCutLines = cutLinesRef.current;
     setHouses((prev) =>
-      prev.map((h) => ({
-        ...h,
-        powerState: "grid",
-        isOutage: false,
-      }))
+      prev.map((h) => {
+        const isCut = activeCutLines.includes(h.householdId);
+        return {
+          ...h,
+          powerState: isCut ? "line_cut" : "grid",
+          isOutage: isCut,
+        };
+      })
     );
 
     try {
@@ -382,7 +404,9 @@ function useMicrogridDataHookInternal() {
   // Reset Entire Microgrid to initial baseline state (clears orders, nominal grid, resets battery reserves)
   const resetMicrogridAction = useCallback(async () => {
     setIsSocietyOutage(false);
+    isSocietyOutageRef.current = false;
     setCutLines([]);
+    cutLinesRef.current = [];
     setEnergyRequests([]);
     setHouses((prev) =>
       prev.map((h) => {
@@ -416,8 +440,9 @@ function useMicrogridDataHookInternal() {
   const cutLinesAction = useCallback(async (householdIds: number[]) => {
     if (!householdIds || householdIds.length === 0) return;
     const numIds = householdIds.map(Number);
-
-    setCutLines((prev) => Array.from(new Set([...prev, ...numIds])));
+    const updated = Array.from(new Set([...cutLinesRef.current, ...numIds]));
+    cutLinesRef.current = updated;
+    setCutLines(updated);
     setHouses((prev) =>
       prev.map((h) => {
         if (!numIds.includes(h.householdId)) return h;
@@ -461,14 +486,16 @@ function useMicrogridDataHookInternal() {
   const restoreLinesAction = useCallback(async (householdIds: number[]) => {
     if (!householdIds || householdIds.length === 0) return;
     const numIds = householdIds.map(Number);
-
-    setCutLines((prev) => prev.filter((id) => !numIds.includes(id)));
+    const updated = cutLinesRef.current.filter((id) => !numIds.includes(id));
+    cutLinesRef.current = updated;
+    setCutLines(updated);
+    const isOutage = isSocietyOutageRef.current;
     setHouses((prev) =>
       prev.map((h) => {
         if (!numIds.includes(h.householdId)) return h;
         const isSolar = SOLAR_HOUSEHOLD_IDS.includes(h.householdId);
-        const powerState: HouseLiveState["powerState"] = isSocietyOutage
-          ? isSolar ? "battery" : "blackout"
+        const powerState: HouseLiveState["powerState"] = isOutage
+          ? (isSolar ? "battery" : "blackout")
           : "grid";
         return {
           ...h,
@@ -499,7 +526,7 @@ function useMicrogridDataHookInternal() {
 
         for (const id of numIds) {
           const isSolar = SOLAR_HOUSEHOLD_IDS.includes(id);
-          const powerState = isSocietyOutage ? (isSolar ? "battery" : "blackout") : "grid";
+          const powerState = isSocietyOutageRef.current ? (isSolar ? "battery" : "blackout") : "grid";
           await supabase
             .from("house_status")
             .update({ power_state: powerState, updated_at: endedAt })
@@ -507,7 +534,7 @@ function useMicrogridDataHookInternal() {
         }
       }
     }
-  }, [isSocietyOutage]);
+  }, []);
 
   const fetchEnergyRequests = useCallback(async () => {
     try {
@@ -790,9 +817,23 @@ function useMicrogridDataHookInternal() {
             ended_at?: string | null;
           };
           if (row && row.scope === "society") {
-            setIsSocietyOutage(!row.ended_at);
+            const active = !row.ended_at;
+            setIsSocietyOutage(active);
+            isSocietyOutageRef.current = active;
+            setHouses((prev) =>
+              prev.map((h) => {
+                const isSolar = h.type === "prosumer";
+                const pState: HouseLiveState["powerState"] = active
+                  ? (isSolar ? (h.batteryKwh > 0 ? "battery" : "blackout") : "blackout")
+                  : (cutLinesRef.current.includes(h.householdId) ? "line_cut" : "grid");
+                return {
+                  ...h,
+                  powerState: pState,
+                  isOutage: pState === "blackout" || pState === "line_cut",
+                };
+              })
+            );
           }
-          fetchLatestTelemetry();
         }
       )
       .on(
@@ -811,10 +852,19 @@ function useMicrogridDataHookInternal() {
           };
           if (!row || !row.household_id) return;
 
+          const isOutage = isSocietyOutageRef.current;
           const isCut = cutLinesRef.current ? cutLinesRef.current.includes(row.household_id) : false;
-          const safePowerState = (row.power_state === "blackout" && !isSocietyOutageRef.current && !isCut)
-            ? "grid"
-            : row.power_state;
+
+          let safePowerState = row.power_state;
+          if (isOutage) {
+            safePowerState = CONSUMER_HOUSEHOLD_IDS.includes(row.household_id)
+              ? "blackout"
+              : (Number(row.battery_kwh) > 0 ? "battery" : "blackout");
+          } else if (isCut) {
+            safePowerState = "line_cut";
+          } else if (safePowerState === "blackout" || safePowerState === "line_cut") {
+            safePowerState = "grid";
+          }
 
           setHouses((prev) =>
             prev.map((h) => {

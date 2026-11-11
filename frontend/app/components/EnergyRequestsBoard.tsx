@@ -515,7 +515,7 @@ export default function EnergyRequestsBoard() {
                 >
                   {consumers.map((c) => (
                     <option key={c.householdId} value={c.householdId}>
-                      {c.name} (Ausgrid #{c.householdId}) {c.isShowcase ? "★ Showcase" : ""}
+                      {c.name} (Ausgrid #{c.householdId}) {c.isShowcase ? "Showcase" : ""}
                     </option>
                   ))}
                 </select>

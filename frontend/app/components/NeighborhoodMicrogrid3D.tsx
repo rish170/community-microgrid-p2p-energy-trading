@@ -274,16 +274,25 @@ function House3D({
         }
         onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
       }}
-      onPointerOver={(e) => {
-        e.stopPropagation();
-        document.body.style.cursor = "pointer";
-        onHover(true);
-      }}
-      onPointerOut={() => {
-        document.body.style.cursor = "auto";
-        onHover(false);
-      }}
     >
+      {/* Invisible Single-Mesh Collider for Jitter-Free Hover & Click Hit Testing */}
+      <mesh
+        position={[0, 1.4, 0]}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = "pointer";
+          onHover(true);
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = "auto";
+          onHover(false);
+        }}
+      >
+        <boxGeometry args={[3.8, 2.8, 3.8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+
       {/* Voxel Cobblestone Foundation Pad */}
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
@@ -351,7 +360,7 @@ function House3D({
         </mesh>
       )}
 
-      {/* Floating Overhead Badge (Hidden when modal open or another single house is zoomed in) */}
+      {/* Floating Overhead Badge: Clean Light Theme (P6 | +3.6 kWh) */}
       {showBadge && (
         <Html position={[0, 2.5, 0]} center distanceFactor={24} zIndexRange={[1, 10]}>
           <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
@@ -365,35 +374,25 @@ function House3D({
               ? "bg-white/95 text-[#1D1D1F] border border-[#5277D5] shadow-[0_4px_16px_rgba(82,119,213,0.25)] ring-2 ring-[#5277D5] font-semibold"
               : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
           }`}>
-            <span className={`w-2.5 h-2.5 rounded-full ${
-              isLineCutActive
-                ? "bg-[#D97706] animate-pulse"
-                : isBlackout
-                ? "bg-[#E11D48] animate-ping"
-                : isOnBattery
-                ? "bg-[#F59E0B] animate-pulse"
-                : isProsumer 
-                ? "bg-[#D99A22]" 
-                : "bg-[#5277D5]"
-            }`} />
-            <span className="font-semibold flex items-center gap-1 text-[#1D1D1F]">
-              <span className={isLineCutActive ? "text-[#FDE68A] font-bold" : isBlackout ? "text-[#FECDD3] font-bold" : "text-[#1D1D1F]"}>{house.id}</span>
-              <span className={`text-[9px] font-mono ${isLineCutActive ? "text-[#FCD34D]" : isBlackout ? "text-[#FDA4AF]" : "text-[#6E6E73]"}`}>
-                #{house.householdId}
-              </span>
+            <span className={`font-semibold ${isLineCutActive ? "text-[#FDE68A]" : isBlackout ? "text-[#FECDD3]" : "text-[#1D1D1F]"}`}>
+              {house.id}
+            </span>
+
+            <span className={`mx-0.5 font-light ${isLineCutActive ? "text-[#D97706]/50" : isBlackout ? "text-[#E11D48]/50" : "text-[#CBD5E1]"}`}>
+              |
             </span>
 
             {isLineCutActive ? (
-              <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
-                <span>✂️ LINE CUT</span>
+              <span className="font-mono text-[10px] text-[#FDE68A] font-bold uppercase tracking-wider">
+                Line Cut
               </span>
             ) : isBlackout ? (
-              <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider flex items-center gap-1 pl-1">
-                <span>⚡ BLACKOUT</span>
+              <span className="font-mono text-[10px] text-[#FDA4AF] font-bold uppercase tracking-wider">
+                Blackout
               </span>
             ) : isOnBattery ? (
-              <span className="font-mono text-[10px] text-[#FDE047] font-semibold flex items-center gap-0.5">
-                <span>🔋 {house.batteryKwh.toFixed(1)} kWh</span>
+              <span className="font-mono text-[10px] text-[#FDE047] font-semibold">
+                {house.batteryKwh.toFixed(1)} kWh
               </span>
             ) : (
               <span className={`font-mono text-[10px] ${
@@ -1704,73 +1703,43 @@ export default function NeighborhoodMicrogrid3D() {
       {selectedHouse && (
         <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-92 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
           
-          {/* Header */}
-          <div className="flex items-start justify-between border-b border-[#E2E8F0] pb-3 mb-3.5">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-mono font-bold text-[#1E293B] px-2 py-0.5 rounded bg-[#F1F5F9] border border-[#CBD5E1]">
-                  {selectedHouse.id}
-                </span>
-                <span className="text-[10px] font-mono text-[#64748B] px-1.5 py-0.5 rounded bg-white border border-[#CBD5E1]">
-                  Ausgrid #{selectedHouse.householdId}
-                </span>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
-                  selectedHouse.type === "prosumer" 
-                    ? "bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20"
-                    : "bg-[#0284C7]/10 text-[#0284C7] border border-[#0284C7]/20"
-                }`}>
-                  {selectedHouse.type}
-                </span>
-
-                {/* Status Chip (F2) */}
-                <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
-                  selectedHouse.powerState === "blackout" || selectedHouse.isOutage
-                    ? "bg-[#E11D48]/10 text-[#E11D48] border border-[#E11D48]/20"
-                    : selectedHouse.powerState === "line_cut"
-                    ? "bg-[#D97706]/10 text-[#D97706] border border-[#D97706]/20"
-                    : selectedHouse.powerState === "battery"
-                    ? "bg-[#D99A22]/10 text-[#D99A22] border border-[#D99A22]/20"
-                    : "bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20"
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    selectedHouse.powerState === "blackout" || selectedHouse.isOutage
-                      ? "bg-[#E11D48] animate-pulse"
-                      : selectedHouse.powerState === "line_cut"
-                      ? "bg-[#D97706]"
-                      : selectedHouse.powerState === "battery"
-                      ? "bg-[#D99A22]"
-                      : "bg-[#16A34A]"
-                  }`} />
-                  {selectedHouse.powerState === "blackout" || selectedHouse.isOutage
-                    ? "Blackout"
-                    : selectedHouse.powerState === "line_cut"
-                    ? "Line Cut"
-                    : selectedHouse.powerState === "battery"
-                    ? "On Battery"
-                    : "Grid Connected"}
-                </span>
-
-                {selectedHouse.isShowcase && (
-                  <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[#5277D5]/10 text-[#5277D5] border border-[#5277D5]/20">
-                    Showcase
-                  </span>
-                )}
-              </div>
-              <h3 className="text-base font-semibold text-[#1E293B] mt-1.5">
-                {selectedHouse.name}
-              </h3>
+          {/* Header Row: Heading on Left, Status Tag Right-Aligned (no dot), plus Close Button */}
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="text-base font-semibold text-[#1E293B]">
+              {selectedHouse.name}
+            </h3>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                  ? "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                  : selectedHouse.powerState === "line_cut"
+                  ? "bg-[#D97706]/10 text-[#D97706] border-[#D97706]/20"
+                  : selectedHouse.powerState === "battery"
+                  ? "bg-[#D99A22]/10 text-[#D99A22] border-[#D99A22]/20"
+                  : "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+              }`}>
+                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage
+                  ? "Blackout"
+                  : selectedHouse.powerState === "line_cut"
+                  ? "Line Cut"
+                  : selectedHouse.powerState === "battery"
+                  ? "On Battery"
+                  : "Grid Connected"}
+              </span>
+              <button
+                onClick={() => setSelectedHouseIds([])}
+                className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+                title="Close panel"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <button
-              onClick={() => setSelectedHouseIds([])}
-              className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
-              title="Close panel"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
 
-          {/* Battery Storage Gauge for Solar Prosumers (F2) */}
-          {selectedHouse.type === "prosumer" && (
+          {/* Consumer Divider vs Prosumer Battery Storage Bar */}
+          {selectedHouse.type === "consumer" ? (
+            <hr className="border-t border-[#E2E8F0] my-3.5" />
+          ) : (
             <div className="mb-3.5 p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5 font-mono text-xs">
               <div className="flex justify-between items-center text-[#64748B]">
                 <span className="flex items-center gap-1.5 text-[11px]">
@@ -1825,29 +1794,9 @@ export default function NeighborhoodMicrogrid3D() {
             )}
           </div>
 
-          {/* Wallet Address with Copy Feedback */}
-          <div className="text-[11px] font-mono text-[#64748B] mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-1.5 rounded-xl border border-[#E2E8F0]">
-            <span>Wallet Node:</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#1E293B] font-semibold truncate max-w-[170px]" title={selectedHouse.walletAddress}>
-                {selectedHouse.walletAddress.length > 14 
-                  ? `${selectedHouse.walletAddress.slice(0, 6)}...${selectedHouse.walletAddress.slice(-4)}`
-                  : selectedHouse.walletAddress}
-              </span>
-              <button
-                onClick={() => handleCopyAddress(selectedHouse.walletAddress)}
-                className="p-1 text-[#64748B] hover:text-[#1E293B] rounded transition cursor-pointer"
-                title="Copy full wallet address"
-              >
-                {copiedAddress ? <Check className="w-3.5 h-3.5 text-[#16A34A]" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-          </div>
-
           {/* Line Isolation Status & Line Cut Control (F4) */}
-          <div className="text-[11px] font-mono mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-2.5 py-2 rounded-xl border border-[#E2E8F0]">
+          <div className="text-[11px] font-mono mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-3 py-2.5 rounded-xl border border-[#E2E8F0]">
             <div className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "bg-[#D97706] animate-pulse" : "bg-[#16A34A]"}`} />
               <span className="text-[#64748B]">Line Connection:</span>
               <span className={`font-semibold ${cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "text-[#D97706]" : "text-[#16A34A]"}`}>
                 {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "Severed" : "Active (33kV)"}
@@ -1856,18 +1805,18 @@ export default function NeighborhoodMicrogrid3D() {
             {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? (
               <button
                 onClick={() => restoreLinesAction([selectedHouse.householdId])}
-                className="px-2 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
+                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
                 title="Reconnect utility line"
               >
-                <span>🔌 Reconnect</span>
+                <span>Reconnect</span>
               </button>
             ) : (
               <button
                 onClick={() => cutLinesAction([selectedHouse.householdId])}
-                className="px-2 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
+                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
                 title="Simulate blown line / isolate house"
               >
-                <span>✂️ Cut Line</span>
+                <span>Cut Line</span>
               </button>
             )}
           </div>
@@ -1901,22 +1850,20 @@ export default function NeighborhoodMicrogrid3D() {
             </div>
           )}
 
-          {/* Context-Aware Action Triggers (F2 - Replaces misleading "Trade surplus energy" button) */}
+          {/* Context-Aware Action Triggers */}
           {selectedHouse.type === "consumer" ? (
-            <button
-              onClick={() => {
-                setModalRequesterId(selectedHouse.householdId);
-                setIsRequestModalOpen(true);
-              }}
-              className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-            >
-              <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-              <span>
-                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut"
-                  ? "Request Emergency Energy Backup →"
-                  : "Dispatch Energy Request →"}
-              </span>
-            </button>
+            (selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut") ? (
+              <button
+                onClick={() => {
+                  setModalRequesterId(selectedHouse.householdId);
+                  setIsRequestModalOpen(true);
+                }}
+                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                <span>Request Energy Backup</span>
+              </button>
+            ) : null
           ) : selectedHouse.powerState === "battery" ? (
             <div className="w-full py-2 px-3 rounded-xl bg-[#D99A22]/10 border border-[#D99A22]/20 text-[#D99A22] text-xs font-mono flex items-center justify-center gap-2">
               <BatteryCharging className="w-4 h-4" />
@@ -1970,13 +1917,13 @@ export default function NeighborhoodMicrogrid3D() {
               onClick={() => cutLinesAction(selectedHouses.map((h) => h.householdId))}
               className="py-2.5 px-3 rounded-xl bg-[#DC2626]/10 hover:bg-[#DC2626]/20 border border-[#DC2626]/30 text-[#DC2626] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
             >
-              <span>✂️ Cut Lines ({selectedHouses.length})</span>
+              <span>Cut Lines ({selectedHouses.length})</span>
             </button>
             <button
               onClick={() => restoreLinesAction(selectedHouses.map((h) => h.householdId))}
               className="py-2.5 px-3 rounded-xl bg-[#16A34A]/10 hover:bg-[#16A34A]/20 border border-[#16A34A]/30 text-[#16A34A] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
             >
-              <span>🔌 Restore Lines</span>
+              <span>Restore Lines</span>
             </button>
           </div>
         </div>
@@ -1986,25 +1933,17 @@ export default function NeighborhoodMicrogrid3D() {
       {isRequestModalOpen && modalRequesterId && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl border border-[#CBD5E1] shadow-[0_24px_48px_rgba(0,0,0,0.25)] max-w-sm w-full p-6 relative font-sans">
-            <button
-              onClick={() => setIsRequestModalOpen(false)}
-              className="absolute top-5 right-5 text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#3A7D5C] animate-pulse" />
-              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#3A7D5C]">
-                Microgrid Dispatch
-              </span>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-[#1D1D1F]">
+                Request Energy Backup
+              </h3>
+              <button
+                onClick={() => setIsRequestModalOpen(false)}
+                className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <h3 className="text-lg font-semibold text-[#1D1D1F] mb-1">
-              Request Energy Backup
-            </h3>
-            <p className="text-xs text-[#6E6E73] mb-4">
-              Dispatches emergency demand to the nearest prosumer with surplus battery capacity.
-            </p>
 
             <form onSubmit={handleModalSubmit} className="space-y-3.5">
               {/* Requester House Display */}

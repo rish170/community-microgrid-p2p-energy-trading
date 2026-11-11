@@ -512,7 +512,7 @@ export default function AdminControlRoom() {
                       rel="noopener noreferrer"
                       className="text-[#5277D5] hover:underline"
                     >
-                      {req.tx_hash.slice(0, 8)}... ↗
+                      {req.tx_hash.slice(0, 8)}... (Etherscan)
                     </a>
                   )}
                 </div>
