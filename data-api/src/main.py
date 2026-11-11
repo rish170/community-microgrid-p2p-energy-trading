@@ -65,16 +65,39 @@ def pick_live_households(sim_subset_path: Path) -> list[int]:
     return [int(x) for x in solar + non_solar]
 
 
-def load_live_data(data_path: Path, live_ids: list[int]):
-    # The model was trained with ALL household ids as categories, so keep the full list.
-    all_ids = sorted(int(h) for h in pd.read_parquet(data_path, columns=["household_id"])["household_id"].unique())
-    try:
-        df = pd.read_parquet(data_path, filters=[("household_id", "in", live_ids)])
-    except Exception:
-        logger.warning("Filtered parquet read failed - falling back to reading the whole file")
-        df = pd.read_parquet(data_path)
-        df = df[df["household_id"].isin(live_ids)]
-    df = df.copy()
+def load_live_data(data_path: Path, live_ids: list[int], sim_subset_path: Path | None = None):
+    # The model was trained with ALL 300 household ids as categories (1 to 300).
+    all_ids = list(range(1, 301))
+
+    if not data_path.exists() and sim_subset_path and sim_subset_path.exists():
+        logger.info(
+            "Full parquet not found at %s -- loading live data from simulation subset %s",
+            data_path, sim_subset_path
+        )
+        df = pd.read_csv(sim_subset_path)
+        df["household_id"] = df["household_id"].astype("int16")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df[df["household_id"].isin(live_ids)].copy()
+    elif data_path.suffix == ".csv":
+        df = pd.read_csv(data_path)
+        df["household_id"] = df["household_id"].astype("int16")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df[df["household_id"].isin(live_ids)].copy()
+    else:
+        try:
+            all_ids = sorted(int(h) for h in pd.read_parquet(data_path, columns=["household_id"])["household_id"].unique())
+        except Exception:
+            all_ids = list(range(1, 301))
+        try:
+            df = pd.read_parquet(data_path, filters=[("household_id", "in", live_ids)])
+        except Exception:
+            logger.warning("Filtered parquet read failed - falling back to reading the whole file")
+            df = pd.read_parquet(data_path)
+            df = df[df["household_id"].isin(live_ids)]
+        df = df.copy()
+        df["household_id"] = df["household_id"].astype("int16")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+
     df["net_load_kwh"] = df["gc_kwh"] + df["cl_kwh"]
     return df, all_ids
 
@@ -89,7 +112,7 @@ def build_engine() -> ReplayEngine:
 
     live_ids = pick_live_households(sim_subset_path)
     logger.info("Live households (%d): %s", len(live_ids), live_ids)
-    df_live, all_ids = load_live_data(data_path, live_ids)
+    df_live, all_ids = load_live_data(data_path, live_ids, sim_subset_path=sim_subset_path)
 
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
