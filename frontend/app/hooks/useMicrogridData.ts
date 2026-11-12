@@ -724,33 +724,36 @@ function useMicrogridDataHookInternal() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "consumption_readings",
         },
         (payload) => {
           const row = payload.new as {
             household_id: number;
-            ts: string;
-            gc_kwh: number;
-            cl_kwh: number;
-            gg_kwh: number;
-            net_kwh: number;
+            ts?: string;
+            timestamp?: string;
+            gc_kwh?: number;
+            cl_kwh?: number;
+            gg_kwh?: number;
+            net_kwh?: number;
           };
 
-          if (!ALL_LIVE_HOUSEHOLD_IDS.includes(row.household_id)) return;
+          if (!row || !ALL_LIVE_HOUSEHOLD_IDS.includes(row.household_id)) return;
 
-          setLastTickTime(row.ts);
+          const timeStr = row.ts || row.timestamp || new Date().toISOString();
+          setLastTickTime(timeStr);
           setHouses((prev) =>
             prev.map((h) => {
               if (h.householdId !== row.household_id) return h;
               const nominalSolar = h.type === "prosumer"
                 ? (h.id === "P3" ? 4.2 : h.id === "P6" ? 3.6 : h.id === "P1" ? 3.4 : 3.0)
                 : 0.0;
-              const readingSolar = Number(row.gg_kwh || 0);
-              const solar = readingSolar > 0 ? readingSolar : (h.type === "prosumer" ? nominalSolar : 0);
+              const isSolarProvided = row.gg_kwh !== undefined && row.gg_kwh !== null;
+              const solar = isSolarProvided ? Number(row.gg_kwh) : (h.type === "prosumer" ? nominalSolar : 0.0);
+              const isUsageProvided = (row.gc_kwh !== undefined && row.gc_kwh !== null) || (row.cl_kwh !== undefined && row.cl_kwh !== null);
               const readingUsage = Number(row.gc_kwh || 0) + Number(row.cl_kwh || 0);
-              const usage = readingUsage > 0 ? readingUsage : h.usageKwh;
+              const usage = isUsageProvided ? readingUsage : h.usageKwh;
               const net = Number((usage - solar).toFixed(2));
               const surplus = Number((solar - usage).toFixed(2));
 
@@ -777,7 +780,7 @@ function useMicrogridDataHookInternal() {
                 batteryKwh,
                 powerState,
                 isOutage: powerState === "blackout" || powerState === "line_cut",
-                lastUpdated: row.ts,
+                lastUpdated: timeStr,
               };
             })
           );
@@ -793,7 +796,7 @@ function useMicrogridDataHookInternal() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "forecasts",
         },
@@ -804,7 +807,7 @@ function useMicrogridDataHookInternal() {
             predicted_generation_kwh: number;
           };
 
-          if (!ALL_LIVE_HOUSEHOLD_IDS.includes(row.household_id)) return;
+          if (!row || !ALL_LIVE_HOUSEHOLD_IDS.includes(row.household_id)) return;
 
           setHouses((prev) =>
             prev.map((h) => {

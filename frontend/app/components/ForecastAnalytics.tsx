@@ -329,16 +329,17 @@ export default function ForecastAnalytics() {
       .channel("forecast-analytics-telemetry-feed")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "consumption_readings" },
+        { event: "*", schema: "public", table: "consumption_readings" },
         (payload) => {
           setIsLiveSynced(true);
           setLastSyncTime(new Date().toLocaleTimeString());
           const newRow = payload.new as {
             household_id: number;
-            timestamp: string;
-            gg_kwh: number;
-            gc_kwh: number;
-            cl_kwh: number;
+            ts?: string;
+            timestamp?: string;
+            gg_kwh?: number;
+            gc_kwh?: number;
+            cl_kwh?: number;
           };
           if (newRow && newRow.household_id) {
             setDbStatsMap((prev) => {
