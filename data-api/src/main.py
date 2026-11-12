@@ -55,35 +55,49 @@ _stop_event: asyncio.Event | None = None
 _running = False
 
 
+def resolve_dataset_path(env_var: str, candidate_rel_paths: list[str]) -> Path:
+    override = os.environ.get(env_var)
+    if override:
+        p = Path(override)
+        if p.exists():
+            return p
+
+    base_dirs = [
+        Path("."),
+        Path("data-api"),
+        Path(__file__).resolve().parent.parent,
+    ]
+    for rel in candidate_rel_paths:
+        for b in base_dirs:
+            candidate = (b / rel).resolve()
+            if candidate.exists():
+                return candidate
+
+    return Path(candidate_rel_paths[0])
+
+
 def pick_live_households(sim_subset_path: Path) -> list[int]:
     override = os.environ.get("LIVE_HOUSEHOLD_IDS")
     if override:
         return [int(x) for x in override.split(",") if x.strip()]
-    sub = pd.read_csv(sim_subset_path).drop_duplicates("household_id")
-    solar = sub[sub["role"] == "prosumer"].nlargest(6, "Generator Capacity")["household_id"].tolist()
-    non_solar = sub[sub["role"] == "consumer"].nsmallest(6, "household_id")["household_id"].tolist()
-    return [int(x) for x in solar + non_solar]
+    if sim_subset_path.exists():
+        try:
+            sub = pd.read_csv(sim_subset_path).drop_duplicates("household_id")
+            solar = sub[sub["role"] == "prosumer"].nlargest(6, "Generator Capacity")["household_id"].tolist()
+            non_solar = sub[sub["role"] == "consumer"].nsmallest(6, "household_id")["household_id"].tolist()
+            ids = [int(x) for x in solar + non_solar]
+            if len(ids) == 12:
+                return ids
+        except Exception as e:
+            logger.warning("Could not read household IDs from %s: %s", sim_subset_path, e)
+    return [282, 33, 212, 55, 244, 112, 18, 26, 48, 90, 117, 141]
 
 
 def load_live_data(data_path: Path, live_ids: list[int], sim_subset_path: Path | None = None):
     # The model was trained with ALL 300 household ids as categories (1 to 300).
     all_ids = list(range(1, 301))
 
-    if not data_path.exists() and sim_subset_path and sim_subset_path.exists():
-        logger.info(
-            "Full parquet not found at %s -- loading live data from simulation subset %s",
-            data_path, sim_subset_path
-        )
-        df = pd.read_csv(sim_subset_path)
-        df["household_id"] = df["household_id"].astype("int16")
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df[df["household_id"].isin(live_ids)].copy()
-    elif data_path.suffix == ".csv":
-        df = pd.read_csv(data_path)
-        df["household_id"] = df["household_id"].astype("int16")
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df[df["household_id"].isin(live_ids)].copy()
-    else:
+    if data_path.suffix == ".parquet" and data_path.exists():
         try:
             all_ids = sorted(int(h) for h in pd.read_parquet(data_path, columns=["household_id"])["household_id"].unique())
         except Exception:
@@ -97,21 +111,49 @@ def load_live_data(data_path: Path, live_ids: list[int], sim_subset_path: Path |
         df = df.copy()
         df["household_id"] = df["household_id"].astype("int16")
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+    elif sim_subset_path and sim_subset_path.exists():
+        logger.info(
+            "Loading live simulation data from subset %s",
+            sim_subset_path
+        )
+        df = pd.read_csv(sim_subset_path)
+        df["household_id"] = df["household_id"].astype("int16")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df[df["household_id"].isin(live_ids)].copy()
+    elif data_path.exists() and data_path.suffix == ".csv":
+        df = pd.read_csv(data_path)
+        df["household_id"] = df["household_id"].astype("int16")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df[df["household_id"].isin(live_ids)].copy()
+    else:
+        raise FileNotFoundError(f"Could not find dataset file at {data_path} or {sim_subset_path}")
 
     df["net_load_kwh"] = df["gc_kwh"] + df["cl_kwh"]
     return df, all_ids
 
 
 def build_engine() -> ReplayEngine:
-    data_path = Path(os.environ.get("DATA_PATH", "./data/processed/ausgrid_clean_full.parquet"))
-    sim_subset_path = Path(os.environ.get("SIM_SUBSET_PATH", "./data/processed/ausgrid_sim_subset.csv"))
+    sim_subset_path = resolve_dataset_path(
+        "SIM_SUBSET_PATH",
+        [
+            "data/processed/ausgrid_sim_12houses.csv",
+            "data/processed/ausgrid_sim_subset.csv",
+        ]
+    )
+    data_path = resolve_dataset_path(
+        "DATA_PATH",
+        [
+            "data/processed/ausgrid_clean_full.parquet",
+            "data/processed/ausgrid_sim_12houses.csv",
+        ]
+    )
     models_dir = Path(os.environ.get("MODELS_DIR", "./models"))
     start_time = pd.Timestamp(os.environ.get("REPLAY_START", "2012-07-01T00:30:00"))
     end_env = os.environ.get("REPLAY_END")
     end_time = pd.Timestamp(end_env) if end_env else start_time + pd.Timedelta(days=7)
 
     live_ids = pick_live_households(sim_subset_path)
-    logger.info("Live households (%d): %s", len(live_ids), live_ids)
+    logger.info("Live households (%d): %s (from %s)", len(live_ids), live_ids, sim_subset_path)
     df_live, all_ids = load_live_data(data_path, live_ids, sim_subset_path=sim_subset_path)
 
     supabase_url = os.environ.get("SUPABASE_URL")
