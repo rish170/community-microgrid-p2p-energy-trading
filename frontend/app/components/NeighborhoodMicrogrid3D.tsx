@@ -1894,7 +1894,7 @@ function GamepadSpatialNavigator({
         }
       }
 
-      const DEADZONE = 0.12;
+      const DEADZONE = 0.14;
 
       // 3C. Left Stick (Axes 0 & 1): Scene movement / Pan (equivalent to right mouse drag)
       const leftX = gp.axes[0] ?? 0;
@@ -1904,11 +1904,14 @@ function GamepadSpatialNavigator({
       if (leftDist > DEADZONE) {
         controls.dispatchEvent({ type: "start", target: controls });
 
-        const factor = (leftDist - DEADZONE) / (1 - DEADZONE);
+        // Smooth non-linear curve so slight tilts provide delicate adjustments
+        const linearFactor = (leftDist - DEADZONE) / (1 - DEADZONE);
+        const factor = Math.pow(linearFactor, 1.4);
         const normX = (leftX / leftDist) * factor;
         const normY = (leftY / leftDist) * factor;
 
-        const panSpeed = 16.0 * Math.min(delta, 0.1);
+        // Lowered pan sensitivity for smooth, controllable scene movement
+        const panSpeed = 8.5 * Math.min(delta, 0.1);
         const rightVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
         const upVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
 
