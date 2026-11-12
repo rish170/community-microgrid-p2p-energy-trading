@@ -230,6 +230,12 @@ The microgrid layout models 12 residential households arranged in alternating **
 | 10 | **P6** | `112` | Prosumer | Yes | 6.0 kWh (4.5 kWh initial) | `[7.5, 4.5]` | Deterministic Node Wallet |
 | 11 | **C6** | `141` | Consumer | No | None | `[12.5, 4.5]` | Initial Outage Benchmark |
 
+> [!NOTE]
+> **Wallet Address Design & Security:**
+> - **Deterministic Dummy Addresses (9 houses):** Houses `282, 33, 55, 244, 112, 48, 90, 117, 141` use deterministic EIP-55 checksummed addresses derived via `ethers.getAddress(ethers.dataSlice(ethers.id("microgrid-demo-house-" + householdId), 12))`. Because these are derived directly from the keccak256 hash of a demo string (not an ECDSA keypair), **no known private key exists**. Any test ETH sent to these dummy addresses is unrecoverable.
+> - **Real Showcase Wallets (3 houses):** Houses `212 (P3)`, `18 (C1)`, and `26 (C2)` are reserved for real MetaMask demonstration. Their wallet addresses must be set manually in Supabase with verified addresses.
+
+
 ---
 
 ## Machine Learning Pipeline

@@ -44,6 +44,8 @@ from src.predict import Forecaster
 
 logger = logging.getLogger("replay_engine")
 
+# SOURCE_TAG must NEVER change -- v_live_consumption specifically filters:
+#   WHERE source = 'simulated'
 SOURCE_TAG = "simulated"  # value written to consumption_readings.source
 
 # Which columns make a row "the same row" -- must match the unique constraints in Supabase.
@@ -61,6 +63,8 @@ class RowSink(Protocol):
 
     def reset(self) -> None: ...
 
+    def fetch_live_household_ids(self) -> list[int] | None: ...
+
 
 class DryRunSink:
     """Collects rows in memory instead of hitting Supabase (for local testing)."""
@@ -77,6 +81,9 @@ class DryRunSink:
     def reset(self) -> None:
         self.written.clear()
         logger.info("[dry-run] cleared in-memory rows")
+
+    def fetch_live_household_ids(self) -> list[int] | None:
+        return None
 
 
 class SupabaseSink:
@@ -97,6 +104,17 @@ class SupabaseSink:
         self.client.table("forecasts").delete().neq("id", 0).execute()
         self.client.table("grid_status").delete().neq("id", 0).execute()
 
+    def fetch_live_household_ids(self) -> list[int] | None:
+        """Fetch all household_ids from Supabase where in_live_sim = true."""
+        try:
+            res = self.client.table("households").select("household_id").eq("in_live_sim", True).execute()
+            if res.data:
+                return sorted(int(row["household_id"]) for row in res.data)
+            return []
+        except Exception as e:
+            logger.warning("Could not fetch in_live_sim households from Supabase: %s", e)
+            return None
+
 
 @dataclass
 class ReplayEngine:
@@ -107,6 +125,8 @@ class ReplayEngine:
     end_time: pd.Timestamp | None = None
     tick_delta: pd.Timedelta = field(default_factory=lambda: pd.Timedelta(minutes=30))
     household_categories: list[int] | None = None   # all 300 ids the model was trained with
+    supabase_live_ids: list[int] | None = None
+    ids_match: bool | None = None
 
     def __post_init__(self):
         self.current_time = self.start_time
@@ -202,6 +222,7 @@ class ReplayEngine:
                 row = by_house.setdefault(int(r.household_id), {
                     "household_id": int(r.household_id),
                     "ts": pd.Timestamp(r.timestamp).isoformat(),
+                    # model_used must NEVER change -- views and Power BI contract depend on "xgboost_v1"
                     "model_used": "xgboost_v1",
                 })
                 row[column] = round(float(r.predicted_kwh), 4)
