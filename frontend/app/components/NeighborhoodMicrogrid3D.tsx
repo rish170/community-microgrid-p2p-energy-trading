@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useMemo, useEffect, Suspense, memo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
@@ -18,10 +18,34 @@ import {
   Copy,
   Check,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Gamepad2
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
+
+// Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
+if (typeof window !== "undefined") {
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    if (
+      typeof args[0] === "string" &&
+      (args[0].includes("THREE.Clock: This module has been deprecated") ||
+       args[0].includes("PCFSoftShadowMap has been deprecated"))
+    ) {
+      return;
+    }
+    origWarn.apply(console, args);
+  };
+}
+
+// Gamepad Status HUD Type
+export interface GamepadHudState {
+  connected: boolean;
+  id: string;
+  activeDirection: "UP" | "DOWN" | "LEFT" | "RIGHT" | null;
+  lastActiveTime: number;
+}
 
 // Types for House Data (aliased to centralized HouseLiveState)
 export type HouseData = HouseLiveState;
@@ -1338,6 +1362,354 @@ function CameraController({
   return null;
 }
 
+/**
+ * Computes the neighbor house in the given screen-space D-pad direction,
+ * calculated dynamically from the active 3D camera orientation.
+ */
+function computeCameraRelativeNeighbor(
+  currentId: string,
+  dirName: "UP" | "DOWN" | "LEFT" | "RIGHT",
+  houses: { id: string; x: number; z: number }[],
+  camera: THREE.Camera
+): string | null {
+  camera.updateMatrixWorld();
+  if ("updateProjectionMatrix" in camera && typeof (camera as THREE.PerspectiveCamera).updateProjectionMatrix === "function") {
+    (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+  }
+
+  const currentHouse = houses.find((h) => h.id === currentId);
+  if (!currentHouse) return null;
+
+  // Project current house into NDC screen coordinates [-1, 1]
+  const curPos = new THREE.Vector3(currentHouse.x, 0, currentHouse.z).project(camera);
+
+  // Screen direction vector (NDC: +X = Right, -X = Left, +Y = Up, -Y = Down)
+  let dir = { x: 0, y: 0 };
+  switch (dirName) {
+    case "UP":
+      dir = { x: 0, y: 1 };
+      break;
+    case "DOWN":
+      dir = { x: 0, y: -1 };
+      break;
+    case "LEFT":
+      dir = { x: -1, y: 0 };
+      break;
+    case "RIGHT":
+      dir = { x: 1, y: 0 };
+      break;
+  }
+
+  let bestHouseId: string | null = null;
+  let minScore = Infinity;
+
+  // Pass 1: Strict directional cone (~75 degrees from direction axis)
+  for (const h of houses) {
+    if (h.id === currentId) continue;
+    const targetPos = new THREE.Vector3(h.x, 0, h.z).project(camera);
+    if (targetPos.z > 1.0) continue; // Behind camera
+
+    const dx = targetPos.x - curPos.x;
+    const dy = targetPos.y - curPos.y;
+
+    // Component parallel to D-pad direction
+    const vPar = dx * dir.x + dy * dir.y;
+    // Component perpendicular to D-pad direction
+    const vPerp = Math.abs(dx * dir.y - dy * dir.x);
+
+    // Must be in forward screen half-space
+    if (vPar > 0.005) {
+      if (vPerp / vPar < 3.0) {
+        const score = vPar + 2.4 * vPerp;
+        if (score < minScore) {
+          minScore = score;
+          bestHouseId = h.id;
+        }
+      }
+    }
+  }
+
+  // Pass 2: Fallback if no neighbor found in strict cone
+  if (!bestHouseId) {
+    for (const h of houses) {
+      if (h.id === currentId) continue;
+      const targetPos = new THREE.Vector3(h.x, 0, h.z).project(camera);
+      if (targetPos.z > 1.0) continue;
+
+      const dx = targetPos.x - curPos.x;
+      const dy = targetPos.y - curPos.y;
+
+      const vPar = dx * dir.x + dy * dir.y;
+      const vPerp = Math.abs(dx * dir.y - dy * dir.x);
+
+      if (vPar > 0.005) {
+        const score = vPar + 3.2 * vPerp;
+        if (score < minScore) {
+          minScore = score;
+          bestHouseId = h.id;
+        }
+      }
+    }
+  }
+
+  return bestHouseId;
+}
+
+interface GamepadSpatialNavigatorProps {
+  houses: HouseLiveState[];
+  controllerFocusedId: string | null;
+  onFocusChange: (houseId: string) => void;
+  onControllerStateChange: React.Dispatch<React.SetStateAction<GamepadHudState>>;
+}
+
+function GamepadSpatialNavigator({
+  houses,
+  controllerFocusedId,
+  onFocusChange,
+  onControllerStateChange,
+}: GamepadSpatialNavigatorProps) {
+  const { camera } = useThree();
+  const prevButtonStates = useRef({
+    UP: false,
+    DOWN: false,
+    LEFT: false,
+    RIGHT: false,
+  });
+  const buttonHoldTimes = useRef({
+    UP: 0,
+    DOWN: 0,
+    LEFT: 0,
+    RIGHT: 0,
+  });
+  const hasControllerRef = useRef(false);
+  const focusedIdRef = useRef<string | null>(controllerFocusedId);
+  focusedIdRef.current = controllerFocusedId;
+
+  // Listen to Gamepad connection events
+  useEffect(() => {
+    const handleConnected = (e: GamepadEvent) => {
+      hasControllerRef.current = true;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: true,
+        id: e.gamepad.id || "DualShock 4 Wireless Controller",
+        lastActiveTime: Date.now(),
+      }));
+    };
+
+    const handleDisconnected = (e: GamepadEvent) => {
+      hasControllerRef.current = false;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: false,
+        activeDirection: null,
+        lastActiveTime: Date.now(),
+      }));
+    };
+
+    window.addEventListener("gamepadconnected", handleConnected);
+    window.addEventListener("gamepaddisconnected", handleDisconnected);
+
+    return () => {
+      window.removeEventListener("gamepadconnected", handleConnected);
+      window.removeEventListener("gamepaddisconnected", handleDisconnected);
+    };
+  }, [onControllerStateChange]);
+
+  // Optional Keyboard Arrow Keys support for developer testing
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      let dir: "UP" | "DOWN" | "LEFT" | "RIGHT" | null = null;
+      if (e.key === "ArrowUp") dir = "UP";
+      else if (e.key === "ArrowDown") dir = "DOWN";
+      else if (e.key === "ArrowLeft") dir = "LEFT";
+      else if (e.key === "ArrowRight") dir = "RIGHT";
+
+      if (dir) {
+        e.preventDefault();
+        const current = focusedIdRef.current;
+        if (!current) {
+          onFocusChange("C1");
+        } else {
+          const nextId = computeCameraRelativeNeighbor(current, dir, houses, camera);
+          if (nextId) {
+            onFocusChange(nextId);
+          }
+        }
+        onControllerStateChange((prev) => ({
+          ...prev,
+          activeDirection: dir,
+          lastActiveTime: Date.now(),
+        }));
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        onControllerStateChange((prev) => ({ ...prev, activeDirection: null }));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [camera, houses, onFocusChange, onControllerStateChange]);
+
+  // Gamepad Polling Loop via Three.js useFrame
+  useFrame(() => {
+    if (typeof navigator === "undefined" || !navigator.getGamepads) return;
+
+    const gamepads = navigator.getGamepads();
+    let gp: Gamepad | null = null;
+    for (let i = 0; i < gamepads.length; i++) {
+      const g = gamepads[i];
+      if (g && g.connected) {
+        gp = g;
+        break;
+      }
+    }
+
+    if (!gp) {
+      if (hasControllerRef.current) {
+        hasControllerRef.current = false;
+        onControllerStateChange((prev) => ({
+          ...prev,
+          connected: false,
+          activeDirection: null,
+        }));
+      }
+      return;
+    }
+
+    if (!hasControllerRef.current) {
+      hasControllerRef.current = true;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: true,
+        id: gp?.id || "DualShock 4 Wireless Controller",
+      }));
+    }
+
+    // Standard DualShock 4 mapping:
+    // buttons[12]: D-pad Up
+    // buttons[13]: D-pad Down
+    // buttons[14]: D-pad Left
+    // buttons[15]: D-pad Right
+    const btnUp = (gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
+    const btnDown = (gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
+    const btnLeft = (gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
+    const btnRight = (gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
+
+    // Left analog stick (axes[0] / axes[1]) with deadzone 0.55
+    const axisX = gp.axes[0] ?? 0;
+    const axisY = gp.axes[1] ?? 0;
+    const stickLeft = axisX < -0.55;
+    const stickRight = axisX > 0.55;
+    const stickUp = axisY < -0.55;
+    const stickDown = axisY > 0.55;
+
+    // POV Hat switch on axes[9] fallback if present
+    let hatUp = false, hatDown = false, hatLeft = false, hatRight = false;
+    if (gp.axes.length > 9) {
+      const hat = Number(gp.axes[9]?.toFixed(2));
+      if (hat >= -1.05 && hat <= -0.95) hatUp = true;
+      else if (hat >= -0.75 && hat <= -0.65) { hatUp = true; hatRight = true; }
+      else if (hat >= -0.45 && hat <= -0.35) hatRight = true;
+      else if (hat >= -0.18 && hat <= -0.10) { hatDown = true; hatRight = true; }
+      else if (hat >= 0.10 && hat <= 0.18) hatDown = true;
+      else if (hat >= 0.38 && hat <= 0.46) { hatDown = true; hatLeft = true; }
+      else if (hat >= 0.68 && hat <= 0.75) hatLeft = true;
+      else if (hat >= 0.98 && hat <= 1.05) { hatUp = true; hatLeft = true; }
+    }
+
+    const isUp = btnUp || stickUp || hatUp;
+    const isDown = btnDown || stickDown || hatDown;
+    const isLeft = btnLeft || stickLeft || hatLeft;
+    const isRight = btnRight || stickRight || hatRight;
+
+    const now = performance.now();
+    const dirs: ("UP" | "DOWN" | "LEFT" | "RIGHT")[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+    const currentStates = {
+      UP: isUp,
+      DOWN: isDown,
+      LEFT: isLeft,
+      RIGHT: isRight,
+    };
+
+    let triggeredDir: "UP" | "DOWN" | "LEFT" | "RIGHT" | null = null;
+
+    for (const d of dirs) {
+      const isPressed = currentStates[d];
+      const wasPressed = prevButtonStates.current[d];
+
+      if (isPressed && !wasPressed) {
+        triggeredDir = d;
+        buttonHoldTimes.current[d] = now;
+        break;
+      } else if (isPressed && wasPressed) {
+        const holdDuration = now - buttonHoldTimes.current[d];
+        if (holdDuration > 380) {
+          triggeredDir = d;
+          buttonHoldTimes.current[d] = now - 180;
+          break;
+        }
+      } else if (!isPressed && wasPressed) {
+        buttonHoldTimes.current[d] = 0;
+      }
+    }
+
+    prevButtonStates.current = currentStates;
+
+    if (triggeredDir) {
+      const current = focusedIdRef.current;
+      if (!current) {
+        // Any button on d-pad pressed: focus ring appears on house C1
+        onFocusChange("C1");
+      } else {
+        // Spatial navigation relative to viewer's current camera angle
+        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, houses, camera);
+        if (nextId) {
+          onFocusChange(nextId);
+        }
+      }
+
+      // Optional subtle haptic feedback for DualShock 4
+      const actuator = (gp as unknown as { vibrationActuator?: { playEffect: (type: string, options: object) => void } }).vibrationActuator;
+      if (actuator && typeof actuator.playEffect === "function") {
+        try {
+          actuator.playEffect("dual-rumble", {
+            startDelay: 0,
+            duration: 40,
+            weakMagnitude: 0.25,
+            strongMagnitude: 0.1,
+          });
+        } catch {}
+      }
+
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: true,
+        id: gp?.id || "DualShock 4 Wireless Controller",
+        activeDirection: triggeredDir,
+        lastActiveTime: Date.now(),
+      }));
+    } else {
+      onControllerStateChange((prev) => {
+        if (prev.activeDirection && !isUp && !isDown && !isLeft && !isRight) {
+          return { ...prev, activeDirection: null };
+        }
+        return prev;
+      });
+    }
+  });
+
+  return null;
+}
+
 // =========================================================================
 // MAIN INTERACTIVE EXPERIENCE COMPONENT
 // =========================================================================
@@ -1362,6 +1734,13 @@ export default function NeighborhoodMicrogrid3D() {
   } = useMicrogridData();
   const [selectedHouseIds, setSelectedHouseIds] = useState<string[]>([]);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
+  const [controllerFocusedId, setControllerFocusedId] = useState<string | null>(null);
+  const [gamepadState, setGamepadState] = useState<GamepadHudState>({
+    connected: false,
+    id: "",
+    activeDirection: null,
+    lastActiveTime: 0,
+  });
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
@@ -1652,13 +2031,21 @@ export default function NeighborhoodMicrogrid3D() {
       
       {/* 3D WebGL Canvas */}
       <Canvas
-        shadows
+        shadows="percentage"
         camera={{ position: [0, 15, 23], fov: 42 }}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
       >
         {/* Soft daylight sky color and atmospheric fog that seamlessly bounds the terrain */}
         <color attach="background" args={["#DCEAF6"]} />
         <fog attach="fog" args={["#DCEAF6", 30, 58]} />
+
+        {/* Gamepad Spatial Controller Navigator (DualShock PS4 & Keyboard Arrows) */}
+        <GamepadSpatialNavigator
+          houses={houses}
+          controllerFocusedId={controllerFocusedId}
+          onFocusChange={(newId) => setControllerFocusedId(newId)}
+          onControllerStateChange={setGamepadState}
+        />
 
         {/* Realistic Sun & Ambient Lighting (Dims dynamically during society outage) */}
         <ambientLight intensity={isSocietyOutage ? 0.7 : 1.6} color={isSocietyOutage ? "#cbd5e1" : "#ffffff"} />
@@ -1704,11 +2091,14 @@ export default function NeighborhoodMicrogrid3D() {
               key={house.id}
               house={house}
               isSelected={selectedHouseIds.includes(house.id)}
-              isHovered={hoveredHouseId === house.id}
+              isHovered={hoveredHouseId === house.id || controllerFocusedId === house.id}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
               showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
               onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
-              onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
+              onHover={(hovered) => {
+                setHoveredHouseId(hovered ? house.id : null);
+                if (hovered) setControllerFocusedId(house.id);
+              }}
             />
           ))}
         </Suspense>
@@ -1759,8 +2149,41 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
         </div>
 
-        {/* Action Controls (Cleaned: Settings moved to Header Navbar - Request 4) */}
+        {/* Action Controls & Gamepad Status Indicator */}
         <div className="pointer-events-auto flex items-center gap-2">
+          {/* DualShock 4 Controller Status HUD */}
+          <div 
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all backdrop-blur-xl ${
+              gamepadState.connected
+                ? "bg-[#0F172A]/90 text-white border-blue-500/50 shadow-[0_4px_16px_rgba(59,130,246,0.25)]"
+                : "bg-white/90 text-[#64748B] border-[#CBD5E1]"
+            }`}
+            title={gamepadState.connected ? `Connected: ${gamepadState.id}` : "Connect your PS4 DualShock controller and press any D-pad button"}
+          >
+            <Gamepad2 className={`w-4 h-4 ${gamepadState.connected ? "text-blue-400" : "text-[#94A3B8]"}`} />
+            {gamepadState.connected ? (
+              <div className="flex items-center gap-2">
+                <span className="text-blue-300 font-semibold hidden md:inline">PS4</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {controllerFocusedId ? (
+                  <span className="px-1.5 py-0.5 rounded bg-blue-500/25 text-blue-200 font-bold border border-blue-400/30">
+                    Focus: {controllerFocusedId}
+                  </span>
+                ) : (
+                  <span className="text-slate-400 text-[11px]">Press D-Pad</span>
+                )}
+                <div className="flex items-center gap-0.5 text-[10px] font-mono select-none">
+                  <span className={`px-1 rounded ${gamepadState.activeDirection === "UP" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▲</span>
+                  <span className={`px-1 rounded ${gamepadState.activeDirection === "DOWN" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▼</span>
+                  <span className={`px-1 rounded ${gamepadState.activeDirection === "LEFT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>◀</span>
+                  <span className={`px-1 rounded ${gamepadState.activeDirection === "RIGHT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▶</span>
+                </div>
+              </div>
+            ) : (
+              <span className="text-[11px] text-[#64748B] hidden sm:inline">PS4 Controller: Press D-Pad</span>
+            )}
+          </div>
+
           {selectedHouseIds.length > 0 && (
             <button
               onClick={() => {

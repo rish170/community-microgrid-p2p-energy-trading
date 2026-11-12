@@ -190,9 +190,9 @@ export default function ForecastAnalytics() {
       // 2. Fetch the latest 576 readings (48 half-hour slots × 12 households = 24-hour cycle)
       const { data: readings, error: readErr, count } = await supabase
         .from("consumption_readings")
-        .select("household_id, timestamp, gg_kwh, gc_kwh, cl_kwh", { count: "exact" })
+        .select("household_id, ts, gg_kwh, gc_kwh, cl_kwh", { count: "exact" })
         .in("household_id", ALL_LIVE_HOUSEHOLD_IDS)
-        .order("timestamp", { ascending: false })
+        .order("ts", { ascending: false })
         .limit(576);
 
       if (readErr || !readings || readings.length === 0) {
@@ -208,16 +208,16 @@ export default function ForecastAnalytics() {
       // 3. Fetch recent ML predictions from forecasts table
       const { data: forecastRows } = await supabase
         .from("forecasts")
-        .select("household_id, target_timestamp, predicted_solar_kwh, predicted_consumption_kwh")
+        .select("household_id, ts, predicted_generation_kwh, predicted_consumption_kwh")
         .in("household_id", ALL_LIVE_HOUSEHOLD_IDS)
-        .order("target_timestamp", { ascending: false })
+        .order("ts", { ascending: false })
         .limit(100);
 
       const forecastLookup = new Map<string, number>();
       if (forecastRows) {
-        for (const f of forecastRows) {
-          const key = f.target_timestamp;
-          forecastLookup.set(key, (forecastLookup.get(key) || 0) + Number(f.predicted_solar_kwh || 0));
+        for (const f of (forecastRows as unknown as { ts: string; predicted_generation_kwh: number }[])) {
+          const key = f.ts;
+          forecastLookup.set(key, (forecastLookup.get(key) || 0) + Number(f.predicted_generation_kwh || 0));
         }
       }
 
@@ -227,8 +227,8 @@ export default function ForecastAnalytics() {
       const timeGroupMap = new Map<string, { solar: number; demand: number; count: number }>();
       const chronologicalReadings = [...readings].reverse();
 
-      for (const r of chronologicalReadings) {
-        const key = r.timestamp;
+      for (const r of (chronologicalReadings as unknown as { ts: string; gg_kwh: number; gc_kwh: number; cl_kwh: number }[])) {
+        const key = r.ts;
         const s = Number(r.gg_kwh || 0);
         const d = Number(r.gc_kwh || 0) + Number(r.cl_kwh || 0);
 
