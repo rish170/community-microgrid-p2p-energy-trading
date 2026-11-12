@@ -21,6 +21,10 @@ venv/
 .venv/
 .vscode/
 
-# Data API local datasets
-data-api/data/
+# Data API local datasets (ignore oversized datasets, keep 12-house deployment CSV)
+data-api/data/raw/
+data-api/data/processed/*.parquet
+data-api/data/processed/*.gz
+data-api/data/processed/ausgrid_sim_subset.csv
+!data-api/data/processed/ausgrid_sim_12houses.csv
 
