@@ -1643,6 +1643,9 @@ interface GamepadSpatialNavigatorProps {
   onResetCameraView: () => void;
   onToggleCutLine: (house: HouseLiveState) => void;
   onRequestBackup: (house: HouseLiveState) => void;
+  onToggleAutoAccept?: () => void;
+  onResetMicrogrid?: () => void;
+  onToggleOutage?: () => void;
   onControllerStateChange: React.Dispatch<React.SetStateAction<GamepadHudState>>;
 }
 
@@ -1659,6 +1662,9 @@ function GamepadSpatialNavigator({
   onResetCameraView,
   onToggleCutLine,
   onRequestBackup,
+  onToggleAutoAccept,
+  onResetMicrogrid,
+  onToggleOutage,
   onControllerStateChange,
 }: GamepadSpatialNavigatorProps) {
   const { camera } = useThree();
@@ -1677,7 +1683,10 @@ function GamepadSpatialNavigator({
   const prevActionButtons = useRef({
     cross: false,
     circle: false,
+    square: false,
     triangle: false,
+    l1: false,
+    r1: false,
     options: false,
   });
   const prevStickClicks = useRef({
@@ -1882,11 +1891,21 @@ function GamepadSpatialNavigator({
     }
 
     // =========================================================================
-    // 2. ACTION BUTTONS: X (Cross / btn 0), Circle (btn 1), Triangle (btn 3), Options (btn 9)
+    // 2. ACTION BUTTONS: 
+    // - X (btn 0): Open house / toggle cut line
+    // - Circle (btn 1): Return / reset view
+    // - Square (btn 2): Toggle auto-accept requests
+    // - Triangle (btn 3): Request energy backup
+    // - L1 (btn 4): Reset microgrid to baseline (settings button)
+    // - R1 (btn 5): Toggle simulate outage
+    // - Options (btn 9): Toggle settings modal
     // =========================================================================
     const btnCross = Boolean(gp.buttons[0]?.pressed || (gp.buttons[0]?.value ?? 0) > 0.5);
     const btnCircle = Boolean(gp.buttons[1]?.pressed || (gp.buttons[1]?.value ?? 0) > 0.5);
+    const btnSquare = Boolean(gp.buttons[2]?.pressed || (gp.buttons[2]?.value ?? 0) > 0.5);
     const btnTriangle = Boolean(gp.buttons[3]?.pressed || (gp.buttons[3]?.value ?? 0) > 0.5);
+    const btnL1 = Boolean(gp.buttons[4]?.pressed || (gp.buttons[4]?.value ?? 0) > 0.5);
+    const btnR1 = Boolean(gp.buttons[5]?.pressed || (gp.buttons[5]?.value ?? 0) > 0.5);
     const btnOptions = Boolean(gp.buttons[9]?.pressed || (gp.buttons[9]?.value ?? 0) > 0.5);
 
     // 2A. X Button (Cross):
@@ -1922,7 +1941,12 @@ function GamepadSpatialNavigator({
       onResetView();
     }
 
-    // 2C. Triangle Button: Triggers "Request Energy Backup" button when house is cut off
+    // 2C. Square Button: Toggles Auto-Accept requests
+    if (btnSquare && !prevActionButtons.current.square) {
+      onToggleAutoAccept?.();
+    }
+
+    // 2D. Triangle Button: Triggers "Request Energy Backup" button when house is cut off
     if (btnTriangle && !prevActionButtons.current.triangle) {
       const currentSelected = selectedHouseRef.current;
       if (currentSelected) {
@@ -1930,7 +1954,17 @@ function GamepadSpatialNavigator({
       }
     }
 
-    // 2D. Options Button (btn 9): Toggles settings modal from header
+    // 2E. L1 Button: Resets microgrid to baseline (the button in settings)
+    if (btnL1 && !prevActionButtons.current.l1) {
+      onResetMicrogrid?.();
+    }
+
+    // 2F. R1 Button: Toggles simulate outage
+    if (btnR1 && !prevActionButtons.current.r1) {
+      onToggleOutage?.();
+    }
+
+    // 2G. Options Button (btn 9): Toggles settings modal from header
     if (btnOptions && !prevActionButtons.current.options) {
       window.dispatchEvent(new CustomEvent("microgrid_toggle_settings"));
     }
@@ -1938,7 +1972,10 @@ function GamepadSpatialNavigator({
     prevActionButtons.current = {
       cross: btnCross,
       circle: btnCircle,
+      square: btnSquare,
       triangle: btnTriangle,
+      l1: btnL1,
+      r1: btnR1,
       options: btnOptions,
     };
 
@@ -2430,6 +2467,15 @@ export default function NeighborhoodMicrogrid3D() {
               setIsRequestModalOpen(true);
             }
           }}
+          onToggleAutoAccept={() => toggleAutoAcceptAction()}
+          onResetMicrogrid={() => resetMicrogridAction()}
+          onToggleOutage={() => {
+            if (isSocietyOutage) {
+              restoreSocietyGrid();
+            } else {
+              triggerSocietyOutage();
+            }
+          }}
           onControllerStateChange={setGamepadState}
         />
 
@@ -2552,49 +2598,8 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
         </div>
 
-        {/* Action Controls & Gamepad Status Indicator */}
+        {/* Action Controls */}
         <div className="pointer-events-auto flex items-center gap-2">
-          {/* DualShock 4 Controller Status HUD */}
-          <div 
-            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all backdrop-blur-xl ${
-              gamepadState.connected
-                ? "bg-[#0F172A]/90 text-white border-blue-500/50 shadow-[0_4px_16px_rgba(59,130,246,0.25)]"
-                : "bg-white/90 text-[#64748B] border-[#CBD5E1]"
-            }`}
-            title={gamepadState.connected ? `Connected: ${gamepadState.id} (D-Pad: Focus, ✕: Open/Cut, ○: Reset, △: Backup, Joysticks: Pan/Rotate)` : "Connect your PS4 DualShock controller and press any D-pad button"}
-          >
-            <Gamepad2 className={`w-4 h-4 ${gamepadState.connected ? "text-blue-400" : "text-[#94A3B8]"}`} />
-            {gamepadState.connected ? (
-              <div className="flex items-center gap-2">
-                <span className="text-blue-300 font-semibold hidden md:inline">PS4</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {controllerFocusedId ? (
-                  <span className="px-1.5 py-0.5 rounded bg-blue-500/25 text-blue-200 font-bold border border-blue-400/30">
-                    Focus: {controllerFocusedId}
-                  </span>
-                ) : (
-                  <span className="text-slate-400 text-[11px]">Press D-Pad</span>
-                )}
-                <div className="flex items-center gap-0.5 text-[10px] font-mono select-none">
-                  <span className={`px-1 rounded ${gamepadState.activeDirection === "UP" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▲</span>
-                  <span className={`px-1 rounded ${gamepadState.activeDirection === "DOWN" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▼</span>
-                  <span className={`px-1 rounded ${gamepadState.activeDirection === "LEFT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>◀</span>
-                  <span className={`px-1 rounded ${gamepadState.activeDirection === "RIGHT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▶</span>
-                </div>
-                <div className="hidden xl:flex items-center gap-2 border-l border-slate-700 pl-2 text-[10px]">
-                  <span className="text-slate-400">✕ <span className="text-slate-300">{selectedHouse ? "Cut Line" : "Open"}</span></span>
-                  <span className="text-slate-400">○ <span className="text-slate-300">Reset</span></span>
-                  <span className="text-slate-400">△ <span className="text-slate-300">Backup</span></span>
-                  <span className="text-slate-400">L2/R2 <span className="text-slate-300">Zoom</span></span>
-                  <span className="text-slate-400">L3+R3 <span className="text-slate-300">Overhead</span></span>
-                  <span className="text-slate-400">Options <span className="text-slate-300">Settings</span></span>
-                </div>
-              </div>
-            ) : (
-              <span className="text-[11px] text-[#64748B] hidden sm:inline">PS4 Controller: Press D-Pad</span>
-            )}
-          </div>
-
           {selectedHouseIds.length > 0 ? (
             <button
               onClick={() => {
@@ -2616,15 +2621,10 @@ export default function NeighborhoodMicrogrid3D() {
             <button
               onClick={handleResetCameraView}
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-98"
-              title="Reset camera angle to overhead look (R3 + L3 on PS4 controller)"
+              title="Reset camera angle to overhead look"
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Reset View</span>
-              {gamepadState.connected && (
-                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 text-[10px] font-bold border border-blue-500/20">
-                  L3+R3
-                </span>
-              )}
             </button>
           )}
         </div>
