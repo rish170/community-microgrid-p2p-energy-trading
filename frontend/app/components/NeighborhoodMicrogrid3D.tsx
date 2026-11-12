@@ -24,6 +24,7 @@ import {
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
 import { playFocusShiftSound, initSoundEffects } from "../utils/soundEffects";
+import { playShiftHaptic } from "../utils/gamepadVibration";
 
 // Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
 if (typeof window !== "undefined") {
@@ -1786,6 +1787,7 @@ function GamepadSpatialNavigator({
         }
         onFocusChange("C1");
         playFocusShiftSound();
+        playShiftHaptic();
       } else {
         const current = focusedIdRef.current;
         const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
@@ -1800,6 +1802,7 @@ function GamepadSpatialNavigator({
           }
           onFocusChange(nextId);
           playFocusShiftSound();
+          playShiftHaptic();
         }
       }
 

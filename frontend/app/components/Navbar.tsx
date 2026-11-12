@@ -19,7 +19,8 @@ import {
   triggerRumble, 
   stopRumble, 
   playVibrationPattern,
-  getActiveGamepad
+  getActiveGamepad,
+  playShiftHaptic
 } from "../utils/gamepadVibration";
 
 export default function Navbar() {
@@ -222,6 +223,35 @@ export default function Navbar() {
                       }`}>
                         {isGamepadDetected ? "Connected" : "Not Detected"}
                       </span>
+                    </div>
+
+                    {/* D-Pad Vibration Toggle Switch */}
+                    <div className="flex items-center justify-between py-2 px-2.5 bg-slate-50 rounded-xl border border-slate-200/80 mb-2.5">
+                      <div>
+                        <div className="text-xs font-semibold text-[#000000]">D-pad Focus Vibration</div>
+                        <div className="text-[11px] text-[#64748B]">Haptic pulse when shifting house focus</div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const nextVal = !(vibrationSettings.dpadVibrationEnabled ?? true);
+                          const updated = { ...vibrationSettings, dpadVibrationEnabled: nextVal };
+                          setVibrationSettings(updated);
+                          saveVibrationSettings(updated);
+                          if (nextVal) {
+                            playShiftHaptic();
+                          }
+                        }}
+                        className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                          (vibrationSettings.dpadVibrationEnabled ?? true) ? "bg-blue-600" : "bg-[#CBD5E1]"
+                        }`}
+                        aria-label="Toggle D-pad Vibration"
+                      >
+                        <span 
+                          className={`block w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                            (vibrationSettings.dpadVibrationEnabled ?? true) ? "translate-x-5" : "translate-x-0.5"
+                          }`} 
+                        />
+                      </button>
                     </div>
 
                     {/* Dual Motor Sliders */}

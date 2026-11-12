@@ -4,13 +4,14 @@
 export interface VibrationSettings {
   strongMagnitude: number; // 0.0 to 1.0 (Left Heavy Motor)
   weakMagnitude: number;   // 0.0 to 1.0 (Right Light Motor)
+  dpadVibrationEnabled?: boolean; // Toggle for D-pad navigation vibrations (defaults to true)
 }
 
 const STORAGE_KEY = "microgrid_ps4_vibration_settings";
 
 export function loadVibrationSettings(): VibrationSettings {
   if (typeof window === "undefined") {
-    return { strongMagnitude: 0.75, weakMagnitude: 0.85 };
+    return { strongMagnitude: 0.75, weakMagnitude: 0.85, dpadVibrationEnabled: true };
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -19,10 +20,11 @@ export function loadVibrationSettings(): VibrationSettings {
       return {
         strongMagnitude: typeof parsed.strongMagnitude === "number" ? parsed.strongMagnitude : 0.75,
         weakMagnitude: typeof parsed.weakMagnitude === "number" ? parsed.weakMagnitude : 0.85,
+        dpadVibrationEnabled: typeof parsed.dpadVibrationEnabled === "boolean" ? parsed.dpadVibrationEnabled : true,
       };
     }
   } catch {}
-  return { strongMagnitude: 0.75, weakMagnitude: 0.85 };
+  return { strongMagnitude: 0.75, weakMagnitude: 0.85, dpadVibrationEnabled: true };
 }
 
 export function saveVibrationSettings(settings: VibrationSettings): void {
@@ -45,7 +47,7 @@ export function getActiveGamepad(): Gamepad | null {
 
 let isRumblingActive = false;
 let lastShiftHapticTime = 0;
-let cachedSettings: VibrationSettings = { strongMagnitude: 0.75, weakMagnitude: 0.85 };
+let cachedSettings: VibrationSettings = { strongMagnitude: 0.75, weakMagnitude: 0.85, dpadVibrationEnabled: true };
 
 if (typeof window !== "undefined") {
   cachedSettings = loadVibrationSettings();
@@ -151,6 +153,7 @@ export async function playVibrationPattern(patternId: string, strong?: number, w
 
 // Tactile click haptic on D-pad navigation with throttle guard to preserve 0ms Bluetooth input latency
 export function playShiftHaptic() {
+  if (cachedSettings.dpadVibrationEnabled === false) return;
   const now = performance.now();
   // Minimum 90ms spacing prevents Bluetooth packet congestion
   if (now - lastShiftHapticTime < 90) return;
