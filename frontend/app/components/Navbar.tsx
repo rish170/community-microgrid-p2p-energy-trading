@@ -8,9 +8,19 @@ import {
   RotateCcw,
   Menu, 
   X,
-  Radio
+  Radio,
+  Gamepad2,
+  Square
 } from "lucide-react";
 import { useMicrogridData } from "../hooks/useMicrogridData";
+import { 
+  loadVibrationSettings, 
+  saveVibrationSettings, 
+  triggerRumble, 
+  stopRumble, 
+  playVibrationPattern,
+  getActiveGamepad
+} from "../utils/gamepadVibration";
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -25,6 +35,25 @@ export default function Navbar() {
     restoreSocietyGrid,
     resetMicrogridAction,
   } = useMicrogridData();
+
+  const [vibrationSettings, setVibrationSettings] = useState(() => loadVibrationSettings());
+  const [activeVibratingPattern, setActiveVibratingPattern] = useState<string | null>(null);
+  const [isGamepadDetected, setIsGamepadDetected] = useState(false);
+
+  useEffect(() => {
+    const checkGp = () => {
+      setIsGamepadDetected(!!getActiveGamepad());
+    };
+    checkGp();
+    window.addEventListener("gamepadconnected", checkGp);
+    window.addEventListener("gamepaddisconnected", checkGp);
+    const interval = setInterval(checkGp, 1500);
+    return () => {
+      window.removeEventListener("gamepadconnected", checkGp);
+      window.removeEventListener("gamepaddisconnected", checkGp);
+      clearInterval(interval);
+    };
+  }, []);
 
   // Close settings popover on click outside
   useEffect(() => {
@@ -90,7 +119,7 @@ export default function Navbar() {
 
             {/* Settings Window / Popover */}
             {settingsOpen && (
-              <div className="absolute right-0 top-14 w-84 bg-white/98 backdrop-blur-xl border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_20px_45px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-200 font-sans z-50">
+              <div className="absolute right-0 top-14 w-92 sm:w-[380px] max-h-[85vh] overflow-y-auto bg-white/98 backdrop-blur-xl border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_20px_45px_rgba(0,0,0,0.12)] animate-in fade-in zoom-in-95 duration-200 font-sans z-50">
                 <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] mb-3">
                   <div>
                     <h3 className="text-sm font-bold text-[#000000]">Microgrid Settings</h3>
@@ -167,6 +196,153 @@ export default function Navbar() {
                       <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
                       <span>Reset Grid to Baseline</span>
                     </button>
+                  </div>
+
+                  {/* 4. DualShock 4 Controller Haptics & Soundbox */}
+                  <div className="pt-3 border-t border-[#E2E8F0]">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Gamepad2 className="w-4 h-4 text-blue-600" />
+                        <span className="text-xs font-bold text-[#000000]">PS4 Remote Vibration Lab</span>
+                      </div>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                        isGamepadDetected 
+                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-semibold"
+                          : "bg-slate-100 text-slate-500 border-slate-200"
+                      }`}>
+                        {isGamepadDetected ? "Connected" : "Not Detected"}
+                      </span>
+                    </div>
+
+                    {/* Dual Motor Sliders */}
+                    <div className="space-y-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 mb-3">
+                      {/* Left Heavy Motor */}
+                      <div>
+                        <div className="flex justify-between text-[11px] font-mono mb-1 text-slate-700">
+                          <span>Left Motor (Heavy / Low-Freq)</span>
+                          <span className="font-bold text-blue-600">{Math.round(vibrationSettings.strongMagnitude * 100)}%</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={vibrationSettings.strongMagnitude}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            const updated = { ...vibrationSettings, strongMagnitude: val };
+                            setVibrationSettings(updated);
+                            saveVibrationSettings(updated);
+                            triggerRumble(80, val, 0);
+                          }}
+                          className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                        />
+                      </div>
+
+                      {/* Right Light Motor */}
+                      <div>
+                        <div className="flex justify-between text-[11px] font-mono mb-1 text-slate-700">
+                          <span>Right Motor (Light / High-Freq)</span>
+                          <span className="font-bold text-blue-600">{Math.round(vibrationSettings.weakMagnitude * 100)}%</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={vibrationSettings.weakMagnitude}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            const updated = { ...vibrationSettings, weakMagnitude: val };
+                            setVibrationSettings(updated);
+                            saveVibrationSettings(updated);
+                            triggerRumble(80, 0, val);
+                          }}
+                          className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Timed Test Buttons */}
+                    <div className="grid grid-cols-3 gap-1.5 mb-3">
+                      <button
+                        onClick={async () => {
+                          setActiveVibratingPattern("1s");
+                          await triggerRumble(1000);
+                          setTimeout(() => setActiveVibratingPattern(null), 1000);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-semibold transition border flex items-center justify-center gap-1 cursor-pointer ${
+                          activeVibratingPattern === "1s"
+                            ? "bg-blue-600 text-white border-blue-600 animate-pulse"
+                            : "bg-white text-slate-700 hover:bg-slate-100 border-slate-200"
+                        }`}
+                      >
+                        <span>1s Vibrate</span>
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          setActiveVibratingPattern("5s");
+                          await triggerRumble(5000);
+                          setTimeout(() => setActiveVibratingPattern(null), 5000);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-semibold transition border flex items-center justify-center gap-1 cursor-pointer ${
+                          activeVibratingPattern === "5s"
+                            ? "bg-blue-600 text-white border-blue-600 animate-pulse"
+                            : "bg-white text-slate-700 hover:bg-slate-100 border-slate-200"
+                        }`}
+                      >
+                        <span>5s Vibrate</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          stopRumble();
+                          setActiveVibratingPattern(null);
+                        }}
+                        className="py-1.5 px-2 rounded-lg text-[11px] font-mono font-semibold transition border bg-rose-50 text-rose-600 hover:bg-rose-100 border-rose-200 flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Square className="w-3 h-3 fill-rose-600" />
+                        <span>Stop</span>
+                      </button>
+                    </div>
+
+                    {/* Soundbox Vibration Patterns */}
+                    <div>
+                      <div className="text-[11px] font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                        <span>Vibration Soundbox</span>
+                        <span className="text-[10px] text-slate-400">Click to play</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { id: "pulse", label: "⚡ Pulse", desc: "130ms snap" },
+                          { id: "double_tap", label: "🔁 Double Tap", desc: "Shift click" },
+                          { id: "heartbeat", label: "💓 Heartbeat", desc: "Lub-dub rhythm" },
+                          { id: "engine_rev", label: "🏎️ Engine Rev", desc: "Ramping throttle" },
+                          { id: "staccato", label: "🎯 Staccato", desc: "3x rapid burst" },
+                          { id: "shockwave", label: "💥 Shockwave", desc: "Max power surge" },
+                        ].map((pat) => (
+                          <button
+                            key={pat.id}
+                            onClick={async () => {
+                              setActiveVibratingPattern(pat.id);
+                              await playVibrationPattern(pat.id);
+                              setTimeout(() => setActiveVibratingPattern(null), 450);
+                            }}
+                            className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
+                              activeVibratingPattern === pat.id
+                                ? "bg-blue-600 text-white border-blue-600 shadow-md scale-98"
+                                : "bg-white hover:bg-slate-50 border-slate-200 text-slate-800"
+                            }`}
+                          >
+                            <div className="text-[11px] font-bold leading-tight">{pat.label}</div>
+                            <div className={`text-[9px] font-mono ${activeVibratingPattern === pat.id ? "text-blue-100" : "text-slate-500"}`}>
+                              {pat.desc}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

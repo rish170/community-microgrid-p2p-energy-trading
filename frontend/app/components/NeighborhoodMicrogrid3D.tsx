@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
+import { playShiftHaptic } from "../utils/gamepadVibration";
 
 // Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
 if (typeof window !== "undefined") {
@@ -1362,14 +1363,40 @@ function CameraController({
   return null;
 }
 
+// Grid layout mappings for the two parallel rows:
+// North row (z = -4.5): C1, P1, C2, P2, C3, P3 (columns 0 to 5)
+// South row (z = +4.5): P4, C4, P5, C5, P6, C6 (columns 0 to 5)
+const ROW_NORTH = ["C1", "P1", "C2", "P2", "C3", "P3"];
+const ROW_SOUTH = ["P4", "C4", "P5", "C5", "P6", "C6"];
+
+const HOUSE_GRID_MAP: Record<string, { row: "NORTH" | "SOUTH"; col: number }> = {
+  C1: { row: "NORTH", col: 0 },
+  P1: { row: "NORTH", col: 1 },
+  C2: { row: "NORTH", col: 2 },
+  P2: { row: "NORTH", col: 3 },
+  C3: { row: "NORTH", col: 4 },
+  P3: { row: "NORTH", col: 5 },
+
+  P4: { row: "SOUTH", col: 0 },
+  C4: { row: "SOUTH", col: 1 },
+  P5: { row: "SOUTH", col: 2 },
+  C5: { row: "SOUTH", col: 3 },
+  P6: { row: "SOUTH", col: 4 },
+  C6: { row: "SOUTH", col: 5 },
+};
+
 /**
- * Computes the neighbor house in the given screen-space D-pad direction,
- * calculated dynamically from the active 3D camera orientation.
+ * Computes the neighbor house in the given D-pad direction.
+ * - In horizontal street orientation (Image 1, 3, 4, 5, top-down):
+ *   LEFT / RIGHT moves along the SAME ROW.
+ *   UP / DOWN moves ACROSS THE STREET to the paired opposite house.
+ * - In vertical street orientation (Image 2: looking down street length):
+ *   UP / DOWN moves along the SAME ROW.
+ *   LEFT / RIGHT moves ACROSS THE STREET to the paired opposite house.
  */
 function computeCameraRelativeNeighbor(
   currentId: string,
   dirName: "UP" | "DOWN" | "LEFT" | "RIGHT",
-  houses: { id: string; x: number; z: number }[],
   camera: THREE.Camera
 ): string | null {
   camera.updateMatrixWorld();
@@ -1377,82 +1404,68 @@ function computeCameraRelativeNeighbor(
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
   }
 
-  const currentHouse = houses.find((h) => h.id === currentId);
-  if (!currentHouse) return null;
+  const cur = HOUSE_GRID_MAP[currentId];
+  if (!cur) return "C1";
 
-  // Project current house into NDC screen coordinates [-1, 1]
-  const curPos = new THREE.Vector3(currentHouse.x, 0, currentHouse.z).project(camera);
+  // Project street axis (from West col 0 at x=-12.5 to East col 5 at x=12.5)
+  const pWest = new THREE.Vector3(-12.5, 0, 0).project(camera);
+  const pEast = new THREE.Vector3(12.5, 0, 0).project(camera);
+  const streetScreen = new THREE.Vector2(pEast.x - pWest.x, pEast.y - pWest.y);
 
-  // Screen direction vector (NDC: +X = Right, -X = Left, +Y = Up, -Y = Down)
-  let dir = { x: 0, y: 0 };
-  switch (dirName) {
-    case "UP":
-      dir = { x: 0, y: 1 };
-      break;
-    case "DOWN":
-      dir = { x: 0, y: -1 };
-      break;
-    case "LEFT":
-      dir = { x: -1, y: 0 };
-      break;
-    case "RIGHT":
-      dir = { x: 1, y: 0 };
-      break;
-  }
+  // Project across-street axis at current column X (from North z=-4.5 to South z=4.5)
+  const colX = -12.5 + cur.col * 5.0;
+  const pNorth = new THREE.Vector3(colX, 0, -4.5).project(camera);
+  const pSouth = new THREE.Vector3(colX, 0, 4.5).project(camera);
+  const crossScreen = new THREE.Vector2(pSouth.x - pNorth.x, pSouth.y - pNorth.y);
 
-  let bestHouseId: string | null = null;
-  let minScore = Infinity;
+  // Determine whether street spans primarily horizontal or vertical on screen
+  const isStreetHorizontal = Math.abs(streetScreen.x) >= Math.abs(streetScreen.y);
 
-  // Pass 1: Strict directional cone (~75 degrees from direction axis)
-  for (const h of houses) {
-    if (h.id === currentId) continue;
-    const targetPos = new THREE.Vector3(h.x, 0, h.z).project(camera);
-    if (targetPos.z > 1.0) continue; // Behind camera
-
-    const dx = targetPos.x - curPos.x;
-    const dy = targetPos.y - curPos.y;
-
-    // Component parallel to D-pad direction
-    const vPar = dx * dir.x + dy * dir.y;
-    // Component perpendicular to D-pad direction
-    const vPerp = Math.abs(dx * dir.y - dy * dir.x);
-
-    // Must be in forward screen half-space
-    if (vPar > 0.005) {
-      if (vPerp / vPar < 3.0) {
-        const score = vPar + 2.4 * vPerp;
-        if (score < minScore) {
-          minScore = score;
-          bestHouseId = h.id;
-        }
-      }
+  if (isStreetHorizontal) {
+    // -------------------------------------------------------------
+    // Horizontal Street (Default, 180°, diagonal angles like img 4/5)
+    // 1. LEFT / RIGHT moves strictly within the SAME ROW
+    // 2. UP / DOWN moves ACROSS THE STREET to the paired opposite house
+    // -------------------------------------------------------------
+    if (dirName === "LEFT" || dirName === "RIGHT") {
+      // If streetScreen.x >= 0, increasing column moves screen-RIGHT.
+      // If streetScreen.x < 0, increasing column moves screen-LEFT.
+      const colStep = (dirName === "RIGHT" ? 1 : -1) * (streetScreen.x >= 0 ? 1 : -1);
+      const nextCol = Math.max(0, Math.min(5, cur.col + colStep));
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
+    } else {
+      // UP / DOWN moves across the street
+      // If crossScreen.y > 0: South row is higher/further UP on screen
+      // If crossScreen.y < 0: North row is higher/further UP on screen
+      const wantSouth = dirName === "UP" ? (crossScreen.y > 0) : (crossScreen.y < 0);
+      const targetRow = wantSouth ? "SOUTH" : "NORTH";
+      const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return targetRowList[cur.col];
+    }
+  } else {
+    // -------------------------------------------------------------
+    // Vertical Street (Looking down street lengthwise, like img 2)
+    // 1. UP / DOWN moves strictly within the SAME ROW
+    // 2. LEFT / RIGHT moves ACROSS THE STREET to the paired opposite house
+    // -------------------------------------------------------------
+    if (dirName === "UP" || dirName === "DOWN") {
+      // If streetScreen.y >= 0, increasing column moves screen-UP.
+      // If streetScreen.y < 0, increasing column moves screen-DOWN.
+      const colStep = (dirName === "UP" ? 1 : -1) * (streetScreen.y >= 0 ? 1 : -1);
+      const nextCol = Math.max(0, Math.min(5, cur.col + colStep));
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
+    } else {
+      // LEFT / RIGHT moves across the street
+      // If crossScreen.x > 0: South row is to the RIGHT on screen
+      // If crossScreen.x < 0: North row is to the RIGHT on screen
+      const wantSouth = dirName === "RIGHT" ? (crossScreen.x > 0) : (crossScreen.x < 0);
+      const targetRow = wantSouth ? "SOUTH" : "NORTH";
+      const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return targetRowList[cur.col];
     }
   }
-
-  // Pass 2: Fallback if no neighbor found in strict cone
-  if (!bestHouseId) {
-    for (const h of houses) {
-      if (h.id === currentId) continue;
-      const targetPos = new THREE.Vector3(h.x, 0, h.z).project(camera);
-      if (targetPos.z > 1.0) continue;
-
-      const dx = targetPos.x - curPos.x;
-      const dy = targetPos.y - curPos.y;
-
-      const vPar = dx * dir.x + dy * dir.y;
-      const vPerp = Math.abs(dx * dir.y - dy * dir.x);
-
-      if (vPar > 0.005) {
-        const score = vPar + 3.2 * vPerp;
-        if (score < minScore) {
-          minScore = score;
-          bestHouseId = h.id;
-        }
-      }
-    }
-  }
-
-  return bestHouseId;
 }
 
 interface GamepadSpatialNavigatorProps {
@@ -1530,10 +1543,12 @@ function GamepadSpatialNavigator({
         const current = focusedIdRef.current;
         if (!current) {
           onFocusChange("C1");
+          playShiftHaptic();
         } else {
-          const nextId = computeCameraRelativeNeighbor(current, dir, houses, camera);
+          const nextId = computeCameraRelativeNeighbor(current, dir, camera);
           if (nextId) {
             onFocusChange(nextId);
+            playShiftHaptic();
           }
         }
         onControllerStateChange((prev) => ({
@@ -1669,25 +1684,14 @@ function GamepadSpatialNavigator({
       if (!current) {
         // Any button on d-pad pressed: focus ring appears on house C1
         onFocusChange("C1");
+        playShiftHaptic();
       } else {
         // Spatial navigation relative to viewer's current camera angle
-        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, houses, camera);
+        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
         if (nextId) {
           onFocusChange(nextId);
+          playShiftHaptic();
         }
-      }
-
-      // Optional subtle haptic feedback for DualShock 4
-      const actuator = (gp as unknown as { vibrationActuator?: { playEffect: (type: string, options: object) => void } }).vibrationActuator;
-      if (actuator && typeof actuator.playEffect === "function") {
-        try {
-          actuator.playEffect("dual-rumble", {
-            startDelay: 0,
-            duration: 40,
-            weakMagnitude: 0.25,
-            strongMagnitude: 0.1,
-          });
-        } catch {}
       }
 
       onControllerStateChange((prev) => ({
