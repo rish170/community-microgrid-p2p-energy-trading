@@ -1408,27 +1408,22 @@ const HOUSE_GRID_MAP: Record<string, { row: "NORTH" | "SOUTH"; col: number }> = 
   C6: { row: "SOUTH", col: 5 },
 };
 
-// Pre-allocated projection scratch vectors to eliminate GC latency
-const _projWest = new THREE.Vector3();
-const _projEast = new THREE.Vector3();
-const _scratchVec = new THREE.Vector3();
-
-function getHouseScreenPos(houseId: string, camera: THREE.Camera): THREE.Vector3 {
-  const coords = HOUSE_COORDS[houseId];
-  if (!coords) return _scratchVec.set(0, 0, 0);
-  return _scratchVec.set(coords[0], coords[1], coords[2]).project(camera);
-}
-
 /**
  * Computes the neighbor house in the given D-pad direction.
- * - Horizontal/Diagonal street orientations (Images 1, 3, 4, 5, top-down):
- *   LEFT / RIGHT moves strictly along the SAME ROW.
- *   UP / DOWN moves strictly ACROSS THE STREET to opposite house.
- *   If there is no house in that direction (e.g. DOWN when on near row, UP when on far row,
- *   or at the end of a row), focus stays on current house (goes nowhere).
- * - Vertical street orientation (Image 2: looking down street length):
- *   UP / DOWN moves along the SAME ROW.
- *   LEFT / RIGHT moves ACROSS THE STREET.
+ * In world space:
+ * - The street runs along the X axis (West col 0 at -12.5 to East col 5 at +12.5).
+ * - North row is at Z = -4.5 (C1, P1, C2, P2, C3, P3).
+ * - South row is at Z = +4.5 (P4, C4, P5, C5, P6, C6).
+ *
+ * Using the camera's orientation matrix:
+ * - Horizontal/Diagonal view (|fz| >= |fx|):
+ *   - LEFT / RIGHT moves strictly along the SAME ROW (column step: col - 1 or col + 1).
+ *     If at end of row, stays where it is (no cyclic wrapping).
+ *   - UP / DOWN moves strictly ACROSS THE STREET to opposite paired house.
+ *     If already on the target row, stays where it is.
+ * - Vertical view (|fx| > |fz|):
+ *   - UP / DOWN moves strictly along the SAME ROW.
+ *   - LEFT / RIGHT moves strictly ACROSS THE STREET.
  */
 function computeCameraRelativeNeighbor(
   currentId: string,
@@ -1440,161 +1435,87 @@ function computeCameraRelativeNeighbor(
   const cur = HOUSE_GRID_MAP[currentId];
   if (!cur) return "C1";
 
-  // Project street axis (from West col 0 at x=-12.5 to East col 5 at x=12.5)
-  _projWest.set(-12.5, 0, 0).project(camera);
-  _projEast.set(12.5, 0, 0).project(camera);
-  const streetScreenX = _projEast.x - _projWest.x;
-  const streetScreenY = _projEast.y - _projWest.y;
+  // Extract camera horizontal forward and right vectors in world space
+  const m = camera.matrixWorld.elements;
+  const rx = m[0];
+  const rz = m[2];
+  const fx = -m[8];
+  const fz = -m[10];
 
-  // Street is only vertical when screen Y delta is much greater than screen X delta (e.g. looking from end of street)
-  const isVerticalStreet = Math.abs(streetScreenY) > Math.abs(streetScreenX) * 1.8;
+  // If camera is looking primarily across the street (|fz| >= |fx|): Horizontal / Diagonal views
+  // If camera is looking primarily along the street (|fx| > |fz|): Vertical view
+  const isHorizontalStreet = Math.abs(fz) >= Math.abs(fx);
 
-  const currentScreenPos = getHouseScreenPos(currentId, camera).clone();
-  const curRowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
-  const oppRowList = cur.row === "NORTH" ? ROW_SOUTH : ROW_NORTH;
-  const oppositeId = oppRowList[cur.col];
-  const oppScreenPos = getHouseScreenPos(oppositeId, camera).clone();
-
-  if (!isVerticalStreet) {
+  if (isHorizontalStreet) {
     // =========================================================================
-    // HORIZONTAL & DIAGONAL ORIENTATIONS (Images 1, 3, 4, 5, top-down)
-    // - LEFT / RIGHT moves strictly in the SAME ROW
-    // - UP / DOWN moves strictly ACROSS THE STREET to opposite house
-    // - NO cyclic wrap-around: if no house in direction, focus goes nowhere!
+    // HORIZONTAL & DIAGONAL VIEWS (Images 1, 3, 4, 5, top-down)
     // =========================================================================
     if (dirName === "LEFT" || dirName === "RIGHT") {
-      let bestCandidate: string = currentId;
+      // Along the row (X axis)
+      // If rx >= 0, increasing col is to the screen-right. If rx < 0, decreasing col is to the screen-right.
+      const colStep = (dirName === "RIGHT" ? 1 : -1) * (rx >= 0 ? 1 : -1);
+      const nextCol = cur.col + colStep;
 
-      if (dirName === "LEFT") {
-        // Find neighbor in same row that is strictly to the left on screen (screenX < currentScreenPos.x)
-        let minDiff = 0;
-        if (cur.col > 0) {
-          const leftId = curRowList[cur.col - 1];
-          const pos = getHouseScreenPos(leftId, camera);
-          const diff = pos.x - currentScreenPos.x;
-          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
-            minDiff = diff;
-            bestCandidate = leftId;
-          }
-        }
-        if (cur.col < 5) {
-          const rightId = curRowList[cur.col + 1];
-          const pos = getHouseScreenPos(rightId, camera);
-          const diff = pos.x - currentScreenPos.x;
-          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
-            minDiff = diff;
-            bestCandidate = rightId;
-          }
-        }
-      } else {
-        // RIGHT: find neighbor in same row strictly to the right on screen (screenX > currentScreenPos.x)
-        let maxDiff = 0;
-        if (cur.col > 0) {
-          const leftId = curRowList[cur.col - 1];
-          const pos = getHouseScreenPos(leftId, camera);
-          const diff = pos.x - currentScreenPos.x;
-          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
-            maxDiff = diff;
-            bestCandidate = leftId;
-          }
-        }
-        if (cur.col < 5) {
-          const rightId = curRowList[cur.col + 1];
-          const pos = getHouseScreenPos(rightId, camera);
-          const diff = pos.x - currentScreenPos.x;
-          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
-            maxDiff = diff;
-            bestCandidate = rightId;
-          }
-        }
+      // Strictly clamped to row bounds: no cyclic wrap-around!
+      if (nextCol < 0 || nextCol > 5) {
+        return currentId;
       }
-      return bestCandidate;
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
     } else {
-      // UP / DOWN across the street:
-      // In Three.js screen space, +Y is UP (top of screen / further into screen), -Y is DOWN (bottom / closer)
-      const dy = oppScreenPos.y - currentScreenPos.y;
+      // Across the street (Z axis)
+      // If fz > 0: South row (+Z) is in front (FAR / UP on screen), North row is behind (NEAR / DOWN on screen)
+      // If fz < 0: North row (-Z) is in front (FAR / UP on screen), South row is behind (NEAR / DOWN on screen)
+      const farRow: "NORTH" | "SOUTH" = fz > 0 ? "SOUTH" : "NORTH";
+      const nearRow: "NORTH" | "SOUTH" = fz > 0 ? "NORTH" : "SOUTH";
+
       if (dirName === "UP") {
-        // Only move if opposite house is higher on screen (in front / farther row)
-        if (dy > 0.01) {
-          return oppositeId;
+        if (cur.row === farRow) {
+          return currentId; // Already in front -> stay
         }
-        // If already on the farther row, there is no house in front -> goes nowhere!
-        return currentId;
+        const targetRowList = farRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
       } else {
-        // DOWN: only move if opposite house is lower on screen (behind / nearer row)
-        if (dy < -0.01) {
-          return oppositeId;
+        if (cur.row === nearRow) {
+          return currentId; // Already behind -> stay
         }
-        // If already on the nearer row, there is no house behind -> goes nowhere!
-        return currentId;
+        const targetRowList = nearRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
       }
     }
   } else {
     // =========================================================================
-    // VERTICAL ORIENTATION (Image 2: looking down the street lengthwise)
-    // - UP / DOWN moves along the SAME ROW
-    // - LEFT / RIGHT moves ACROSS THE STREET
-    // - NO cyclic wrap-around: if no house in direction, focus goes nowhere!
+    // VERTICAL STREET VIEW (Image 2: looking lengthwise down the street)
     // =========================================================================
     if (dirName === "UP" || dirName === "DOWN") {
-      let bestCandidate: string = currentId;
-      if (dirName === "UP") {
-        // Neighbor in same row that is higher on screen (screenY > currentScreenPos.y)
-        let maxDiff = 0;
-        if (cur.col > 0) {
-          const prevId = curRowList[cur.col - 1];
-          const pos = getHouseScreenPos(prevId, camera);
-          const diff = pos.y - currentScreenPos.y;
-          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
-            maxDiff = diff;
-            bestCandidate = prevId;
-          }
-        }
-        if (cur.col < 5) {
-          const nextId = curRowList[cur.col + 1];
-          const pos = getHouseScreenPos(nextId, camera);
-          const diff = pos.y - currentScreenPos.y;
-          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
-            maxDiff = diff;
-            bestCandidate = nextId;
-          }
-        }
-      } else {
-        // DOWN: Neighbor in same row that is lower on screen (screenY < currentScreenPos.y)
-        let minDiff = 0;
-        if (cur.col > 0) {
-          const prevId = curRowList[cur.col - 1];
-          const pos = getHouseScreenPos(prevId, camera);
-          const diff = pos.y - currentScreenPos.y;
-          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
-            minDiff = diff;
-            bestCandidate = prevId;
-          }
-        }
-        if (cur.col < 5) {
-          const nextId = curRowList[cur.col + 1];
-          const pos = getHouseScreenPos(nextId, camera);
-          const diff = pos.y - currentScreenPos.y;
-          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
-            minDiff = diff;
-            bestCandidate = nextId;
-          }
-        }
+      // Along the street (X axis)
+      // If fx >= 0: increasing col is in front (UP on screen)
+      const colStep = (dirName === "UP" ? 1 : -1) * (fx >= 0 ? 1 : -1);
+      const nextCol = cur.col + colStep;
+
+      if (nextCol < 0 || nextCol > 5) {
+        return currentId;
       }
-      return bestCandidate;
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
     } else {
-      // LEFT / RIGHT across the street:
-      const dx = oppScreenPos.x - currentScreenPos.x;
-      if (dirName === "LEFT") {
-        if (dx < -0.01) {
-          return oppositeId;
+      // Across the street (Z axis)
+      // If rz >= 0: South row (+Z) is screen-RIGHT, North row is screen-LEFT
+      const rightRow: "NORTH" | "SOUTH" = rz >= 0 ? "SOUTH" : "NORTH";
+      const leftRow: "NORTH" | "SOUTH" = rz >= 0 ? "NORTH" : "SOUTH";
+
+      if (dirName === "RIGHT") {
+        if (cur.row === rightRow) {
+          return currentId;
         }
-        return currentId;
+        const targetRowList = rightRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
       } else {
-        if (dx > 0.01) {
-          return oppositeId;
+        if (cur.row === leftRow) {
+          return currentId;
         }
-        return currentId;
+        const targetRowList = leftRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
       }
     }
   }
@@ -1717,25 +1638,12 @@ function GamepadSpatialNavigator({
   });
   const prevDirectionRef = useRef<string | null>(null);
   const hasControllerRef = useRef(false);
+  const lastShiftTimeRef = useRef(0);
 
   // Authoritative focus ID ref to eliminate any asynchronous React state race-conditions or backward flashing
   const focusedIdRef = useRef<string | null>(controllerFocusedId || "C1");
-  const lastControllerIdRef = useRef<string | null>(controllerFocusedId);
   const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
   selectedHouseRef.current = selectedHouse;
-
-  useEffect(() => {
-    // Only sync if controllerFocusedId changed from external mouse interaction
-    if (controllerFocusedId && controllerFocusedId !== lastControllerIdRef.current) {
-      focusedIdRef.current = controllerFocusedId;
-      lastControllerIdRef.current = controllerFocusedId;
-      const coords = HOUSE_COORDS[controllerFocusedId];
-      if (coords && focusRingRef.current) {
-        focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
-        focusRingRef.current.visible = true;
-      }
-    }
-  }, [controllerFocusedId, focusRingRef]);
 
   // Listen to Gamepad connection events
   useEffect(() => {
@@ -1806,60 +1714,56 @@ function GamepadSpatialNavigator({
     // =========================================================================
     // 1. STRICT D-PAD FOCUS NAVIGATION (Instant response, zero lag, no sticks/arrows)
     // =========================================================================
-    // DualShock 4 D-pad mapping: buttons[12]=Up, [13]=Down, [14]=Left, [15]=Right
-    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.3);
-    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.3);
-    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.3);
-    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.3);
-
-    // Optional POV Hat switch on axes[9] fallback if driver uses hat switch for D-pad
-    let hatUp = false, hatDown = false, hatLeft = false, hatRight = false;
-    if (gp.axes.length > 9) {
-      const hat = Number(gp.axes[9]?.toFixed(2));
-      if (hat >= -1.05 && hat <= -0.95) hatUp = true;
-      else if (hat >= -0.75 && hat <= -0.65) { hatUp = true; hatRight = true; }
-      else if (hat >= -0.45 && hat <= -0.35) hatRight = true;
-      else if (hat >= -0.18 && hat <= -0.10) { hatDown = true; hatRight = true; }
-      else if (hat >= 0.10 && hat <= 0.18) hatDown = true;
-      else if (hat >= 0.38 && hat <= 0.46) { hatDown = true; hatLeft = true; }
-      else if (hat >= 0.68 && hat <= 0.75) hatLeft = true;
-      else if (hat >= 0.98 && hat <= 1.05) { hatUp = true; hatLeft = true; }
-    }
-
-    const isUp = btnUp || hatUp;
-    const isDown = btnDown || hatDown;
-    const isLeft = btnLeft || hatLeft;
-    const isRight = btnRight || hatRight;
+    // DualShock 4 W3C Standard D-pad mapping: buttons[12]=Up, [13]=Down, [14]=Left, [15]=Right
+    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
+    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
+    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
+    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
 
     const now = performance.now();
     const dirs: ("UP" | "DOWN" | "LEFT" | "RIGHT")[] = ["UP", "DOWN", "LEFT", "RIGHT"];
     const currentStates = {
-      UP: isUp,
-      DOWN: isDown,
-      LEFT: isLeft,
-      RIGHT: isRight,
+      UP: btnUp,
+      DOWN: btnDown,
+      LEFT: btnLeft,
+      RIGHT: btnRight,
     };
 
     let triggeredDir: "UP" | "DOWN" | "LEFT" | "RIGHT" | null = null;
 
-    for (const d of dirs) {
-      const isPressed = currentStates[d];
-      const wasPressed = prevButtonStates.current[d];
+    // Minimum cooldown between ANY shifts (110ms) eliminates switch-bounce and diagonal double-triggering
+    const MIN_SHIFT_COOLDOWN = 110; // ms
+    const REPEAT_INITIAL_DELAY = 260; // ms
+    const REPEAT_INTERVAL = 110; // ms
 
-      if (isPressed && !wasPressed) {
-        // Immediate, instant trigger with 0ms delay on press
-        triggeredDir = d;
-        buttonHoldTimes.current[d] = now;
-        break;
-      } else if (isPressed && wasPressed) {
-        const holdDuration = now - buttonHoldTimes.current[d];
-        // Snappy initial repeat threshold (220ms), followed by rapid 75ms repeat
-        if (holdDuration > 220) {
-          triggeredDir = d;
-          buttonHoldTimes.current[d] = now - 145;
-          break;
+    const canShift = now - lastShiftTimeRef.current >= MIN_SHIFT_COOLDOWN;
+
+    if (canShift) {
+      // 1. Check for newly pressed button (highest priority)
+      const newlyPressed = dirs.find((d) => currentStates[d] && !prevButtonStates.current[d]);
+      if (newlyPressed) {
+        triggeredDir = newlyPressed;
+        buttonHoldTimes.current[newlyPressed] = now;
+        lastShiftTimeRef.current = now;
+      } else {
+        // 2. Check for held button (auto-repeat)
+        for (const d of dirs) {
+          if (currentStates[d] && prevButtonStates.current[d]) {
+            const holdDuration = now - buttonHoldTimes.current[d];
+            if (holdDuration >= REPEAT_INITIAL_DELAY) {
+              triggeredDir = d;
+              buttonHoldTimes.current[d] = now - (REPEAT_INITIAL_DELAY - REPEAT_INTERVAL);
+              lastShiftTimeRef.current = now;
+              break;
+            }
+          }
         }
-      } else if (!isPressed && wasPressed) {
+      }
+    }
+
+    // Reset hold timers for released buttons
+    for (const d of dirs) {
+      if (!currentStates[d] && prevButtonStates.current[d]) {
         buttonHoldTimes.current[d] = 0;
       }
     }
@@ -1872,7 +1776,6 @@ function GamepadSpatialNavigator({
 
       if (nextId && nextId !== current) {
         focusedIdRef.current = nextId;
-        lastControllerIdRef.current = nextId;
         const coords = HOUSE_COORDS[nextId];
         // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
         if (coords && focusRingRef.current) {
@@ -1894,7 +1797,7 @@ function GamepadSpatialNavigator({
         }));
       }
     } else {
-      if (prevDirectionRef.current !== null && !isUp && !isDown && !isLeft && !isRight) {
+      if (prevDirectionRef.current !== null && !btnUp && !btnDown && !btnLeft && !btnRight) {
         prevDirectionRef.current = null;
         onControllerStateChange((prev) => ({ ...prev, activeDirection: null }));
       }
@@ -1916,7 +1819,6 @@ function GamepadSpatialNavigator({
       if (!currentSelected) {
         const targetId = focusedIdRef.current || "C1";
         focusedIdRef.current = targetId;
-        lastControllerIdRef.current = targetId;
         const coords = HOUSE_COORDS[targetId];
         if (coords && focusRingRef.current) {
           focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
