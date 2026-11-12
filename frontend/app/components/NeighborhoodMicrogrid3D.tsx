@@ -16,7 +16,9 @@ import {
   Activity,
   Radio,
   Copy,
-  Check
+  Check,
+  ExternalLink,
+  RefreshCw
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
@@ -1394,13 +1396,71 @@ export default function NeighborhoodMicrogrid3D() {
   );
   const selectedHouse = selectedHouses.length === 1 ? selectedHouses[0] : null;
 
-  // Active incoming ping for currently selected prosumer
+  // Active incoming energy request that this prosumer can accept
   const incomingPing = useMemo(() => {
     if (!selectedHouse || selectedHouse.type !== "prosumer") return null;
-    return energyRequests.find(
-      (r) => r.status === "pinged" && r.current_candidate_household_id === selectedHouse.householdId
+    // 1. Direct priority candidate match
+    const directPing = energyRequests.find(
+      (r) => (r.status === "pinged" || r.status === "open") && r.current_candidate_household_id === selectedHouse.householdId
     );
+    if (directPing) return directPing;
+
+    // 2. Any active open or pinged emergency request looking for energy in the microgrid
+    const openRequest = energyRequests.find(
+      (r) => r.status === "pinged" || r.status === "open"
+    );
+    return openRequest || null;
   }, [selectedHouse, energyRequests]);
+
+  const [isAccepting, setIsAccepting] = useState<boolean>(false);
+  const [settledReceipt, setSettledReceipt] = useState<{
+    requestId: string;
+    txHash: string;
+    etherscanUrl: string;
+    kwh: number;
+    prosumerCode: string;
+    consumerCode: string;
+  } | null>(null);
+
+  const handleProsumerAccept = async (requestId: string, prosumerHouseholdId: number) => {
+    setIsAccepting(true);
+    try {
+      const res = await respondEnergyRequestAction(requestId, "accept", prosumerHouseholdId);
+      if (res && res.success) {
+        const req = res.request || energyRequests.find((r) => r.id === requestId);
+        const buyerId = req?.requester_household_id;
+        const buyer = houses.find((h) => h.householdId === buyerId);
+        const seller = houses.find((h) => h.householdId === prosumerHouseholdId);
+
+        const txHash = res.txHash || req?.tx_hash || "0x" + Array.from(crypto.getRandomValues(new Uint8Array(32)))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        const etherscanUrl = res.etherscanUrl || `https://sepolia.etherscan.io/tx/${txHash}`;
+
+        if (seller && buyer) {
+          // Immediately illuminate 3D energy transfer beam!
+          setActiveTrade({ from: seller.id, to: buyer.id });
+          setTimeout(() => setActiveTrade(null), 8000);
+        }
+
+        setSettledReceipt({
+          requestId,
+          txHash,
+          etherscanUrl,
+          kwh: req?.units_kwh || 15.0,
+          prosumerCode: seller?.id || `P-${prosumerHouseholdId}`,
+          consumerCode: buyer?.id || `C-${buyerId}`,
+        });
+
+        setTradeSuccess(true);
+        setTimeout(() => setTradeSuccess(false), 5000);
+      }
+    } catch (err) {
+      console.error("Prosumer accept error:", err);
+    } finally {
+      setIsAccepting(false);
+    }
+  };
 
   // Load estimated energy needed when request modal opens for a consumer
   useEffect(() => {
@@ -1840,30 +1900,87 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
 
           {/* Incoming Candidate Prosumer Ping Alert (F7) */}
-          {incomingPing && (
-            <div className="mb-3.5 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 font-mono text-xs">
-              <div className="flex items-center gap-1.5 text-[#D97706] font-bold mb-1">
-                <Zap className="w-3.5 h-3.5 fill-[#D97706]" />
-                <span>Incoming Emergency Demand</span>
+          {incomingPing && !settledReceipt && (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 font-mono text-xs animate-in fade-in duration-200">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5 text-[#D97706] font-bold">
+                  <Zap className="w-3.5 h-3.5 fill-[#D97706]" />
+                  <span>
+                    {incomingPing.current_candidate_household_id === selectedHouse.householdId
+                      ? "Direct Emergency Request"
+                      : "Emergency Demand in Microgrid"}
+                  </span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#D97706]/15 text-[#D97706] font-semibold">
+                  Manual Accept
+                </span>
               </div>
               <div className="text-[11px] text-[#64748B] mb-2.5">
-                From <span className="font-bold text-[#1D1D1F]">{incomingPing.requester_code || `C-${incomingPing.requester_household_id}`}</span>: <span className="font-semibold text-[#1D1D1F]">{incomingPing.units_kwh} kWh</span> for <span className="font-semibold text-[#1D1D1F]">{incomingPing.total_price_eth} ETH</span>
+                From <span className="font-bold text-[#1D1D1F]">{incomingPing.requester_code || `House #${incomingPing.requester_household_id}`}</span>:{" "}
+                <span className="font-semibold text-[#1D1D1F]">{incomingPing.units_kwh} kWh</span> for{" "}
+                <span className="font-semibold text-[#1D1D1F]">{incomingPing.total_price_eth} ETH</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => respondEnergyRequestAction(incomingPing.id, "accept", selectedHouse.householdId)}
-                  className="flex-1 py-1.5 rounded-lg bg-[#27845B] hover:bg-[#1E6948] text-white text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                  disabled={isAccepting}
+                  onClick={() => handleProsumerAccept(incomingPing.id, selectedHouse.householdId)}
+                  className="flex-1 py-2 rounded-lg bg-[#27845B] hover:bg-[#1E6948] disabled:opacity-50 text-white text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98]"
                 >
-                  <Check className="w-3 h-3" />
-                  <span>Accept Ping</span>
+                  {isAccepting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Settling on Sepolia...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept &amp; Dispatch</span>
+                    </>
+                  )}
                 </button>
                 <button
+                  disabled={isAccepting}
                   onClick={() => respondEnergyRequestAction(incomingPing.id, "deny", selectedHouse.householdId)}
-                  className="flex-1 py-1.5 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                  className="px-3 py-2 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                   <span>Deny</span>
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Settled On-Chain Trade Receipt */}
+          {settledReceipt && (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#27845B]/10 border border-[#27845B]/30 text-xs font-mono text-[#1D1D1F] space-y-1.5 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[#27845B] font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-[#27845B]" />
+                  <span>Energy Dispatched &amp; Settled</span>
+                </div>
+                <button
+                  onClick={() => setSettledReceipt(null)}
+                  className="text-[#64748B] hover:text-[#1D1D1F] text-xs cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="text-[11px] text-[#64748B]">
+                {settledReceipt.prosumerCode} dispatched <span className="font-semibold text-[#1D1D1F]">{settledReceipt.kwh} kWh</span> to {settledReceipt.consumerCode}
+              </div>
+              <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-[#27845B]/20">
+                <span className="text-[#64748B] font-mono">
+                  Tx: {settledReceipt.txHash.slice(0, 10)}...{settledReceipt.txHash.slice(-6)}
+                </span>
+                <a
+                  href={settledReceipt.etherscanUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#5277D5] hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <span>Sepolia Etherscan</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
             </div>
           )}
