@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
-import { playFocusShiftSound, initSoundEffects } from "../utils/soundEffects";
+import { playFocusShiftSound, playSelectSound, initSoundEffects } from "../utils/soundEffects";
 import { playShiftHaptic } from "../utils/gamepadVibration";
 
 // Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
@@ -1646,6 +1646,18 @@ function GamepadSpatialNavigator({
   const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
   selectedHouseRef.current = selectedHouse;
 
+  // Synchronize external focus changes (e.g. mouse hover or mouse click) into controller focus ref
+  useEffect(() => {
+    if (controllerFocusedId) {
+      focusedIdRef.current = controllerFocusedId;
+      const coords = HOUSE_COORDS[controllerFocusedId];
+      if (coords && focusRingRef.current) {
+        focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+        focusRingRef.current.visible = true;
+      }
+    }
+  }, [controllerFocusedId, focusRingRef]);
+
   useEffect(() => {
     initSoundEffects();
   }, []);
@@ -1846,6 +1858,7 @@ function GamepadSpatialNavigator({
         }
         onFocusChange(targetId);
         onSelectHouse(targetId);
+        playSelectSound();
       } else {
         onToggleCutLine(currentSelected);
       }
@@ -2422,13 +2435,16 @@ export default function NeighborhoodMicrogrid3D() {
               key={house.id}
               house={house}
               isSelected={selectedHouseIds.includes(house.id)}
-              isHovered={hoveredHouseId === house.id && !gamepadState.connected}
+              isHovered={hoveredHouseId === house.id}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
               showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
-              onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
+              onSelect={(isMulti) => {
+                setControllerFocusedId(house.id);
+                handleHouseSelect(house.id, isMulti);
+              }}
               onHover={(hovered) => {
                 setHoveredHouseId(hovered ? house.id : null);
-                if (hovered && !gamepadState.connected) {
+                if (hovered) {
                   setControllerFocusedId(house.id);
                 }
               }}
