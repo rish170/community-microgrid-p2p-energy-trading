@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect, Suspense, memo } from "react";
+import React, { useState, useRef, useMemo, useEffect, useCallback, Suspense, memo } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -212,7 +212,9 @@ function House3D({
   const isLineCutActive = isLineCut || house.powerState === "line_cut";
   // Consumers without line enter blackout; prosumers run on islanded battery/solar
   const isBlackout = (!isProsumer && house.powerState !== "grid") || house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
-  const isOnBattery = isProsumer && (house.powerState === "battery" || isLineCutActive);
+  const isOnBattery = isProsumer && house.powerState === "battery" && !isLineCutActive;
+  // House goes completely dark on either utility blackout or blown/cut line
+  const shouldBeDark = isBlackout || isLineCutActive;
 
   // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
@@ -240,7 +242,7 @@ function House3D({
     return c;
   }, [scene]);
 
-  // Dynamically update materials when house enters or exits blackout
+  // Dynamically update materials when house enters or exits blackout or cutoff
   useEffect(() => {
     clonedScene.traverse((node) => {
       if ((node as THREE.Mesh).isMesh) {
@@ -249,14 +251,14 @@ function House3D({
         materials.forEach((mat) => {
           if (!mat) return;
           const stdMat = mat as THREE.MeshStandardMaterial;
-          if (isBlackout) {
+          if (shouldBeDark) {
             if (!stdMat.userData.originalColor) {
               stdMat.userData.originalColor = stdMat.color.clone();
               stdMat.userData.originalEmissive = stdMat.emissive ? stdMat.emissive.clone() : new THREE.Color(0, 0, 0);
               stdMat.userData.originalEmissiveIntensity = stdMat.emissiveIntensity || 0;
             }
             if (stdMat.name === "window") {
-              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout
+              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout/line-cut
               if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
               stdMat.emissiveIntensity = 0;
               stdMat.roughness = 0.95;
@@ -276,7 +278,7 @@ function House3D({
         });
       }
     });
-  }, [clonedScene, isBlackout]);
+  }, [clonedScene, shouldBeDark]);
 
   // House scaling & base alignment
   const scale = 0.28;
@@ -324,7 +326,7 @@ function House3D({
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
         <meshStandardMaterial 
-          color={isBlackout ? "#332228" : isLineCutActive ? "#42281D" : "#B0B2BA"} 
+          color={shouldBeDark ? "#332228" : "#B0B2BA"} 
           roughness={0.8} 
         />
       </mesh>
@@ -340,11 +342,11 @@ function House3D({
       {/* PROSUMERS (P1 to P6): Rooftop Solar PV Installation */}
       {/* CONSUMERS (C1 to C6): Standard clean roof */}
       {isProsumer && (
-        <HouseRooftopSolar isSelected={isSelected} isBlackout={isBlackout} />
+        <HouseRooftopSolar isSelected={isSelected} isBlackout={shouldBeDark} />
       )}
 
       {/* Blackout Emergency Beacon */}
-      {isBlackout && (
+      {shouldBeDark && (
         <pointLight 
           position={[0, 0.7, 0]} 
           intensity={0.8} 
@@ -353,7 +355,7 @@ function House3D({
         />
       )}
 
-      {/* Islanded Prosumer Battery Glow */}
+      {/* Islanded Prosumer Battery Glow (only when active and connected) */}
       {isOnBattery && (
         <pointLight 
           position={[0, 1.4, 0]} 
@@ -1269,13 +1271,16 @@ function ActiveTradeBeam({
 
 function CameraController({ 
   selectedHouse,
-  controlsRef
+  controlsRef,
+  resetViewTrigger = 0
 }: { 
   selectedHouse: HouseData | null; 
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  resetViewTrigger?: number;
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
+  const prevResetTrigger = useRef(resetViewTrigger);
   const transitionProgress = useRef(0);
   const startPos = useRef(new THREE.Vector3(0, 15, 23));
   const startTarget = useRef(new THREE.Vector3(0, 0.5, 0));
@@ -1294,17 +1299,18 @@ function CameraController({
   }, [controlsRef]);
 
   useEffect(() => {
-    // Only transition camera when user selects a different house or resets view
-    if (selectedHouse?.id !== prevSelectedId.current) {
+    // Only transition camera when user selects a different house or explicitly resets view
+    if (selectedHouse?.id !== prevSelectedId.current || resetViewTrigger !== prevResetTrigger.current) {
       isTransitioning.current = true;
       transitionProgress.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
+      prevResetTrigger.current = resetViewTrigger;
       if (controlsRef.current) {
         startPos.current.copy(controlsRef.current.object.position);
         startTarget.current.copy(controlsRef.current.target);
       }
     }
-  }, [selectedHouse, controlsRef]);
+  }, [selectedHouse, resetViewTrigger, controlsRef]);
 
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
@@ -1405,17 +1411,24 @@ const HOUSE_GRID_MAP: Record<string, { row: "NORTH" | "SOUTH"; col: number }> = 
 // Pre-allocated projection scratch vectors to eliminate GC latency
 const _projWest = new THREE.Vector3();
 const _projEast = new THREE.Vector3();
-const _projNorth = new THREE.Vector3();
-const _projSouth = new THREE.Vector3();
+const _scratchVec = new THREE.Vector3();
+
+function getHouseScreenPos(houseId: string, camera: THREE.Camera): THREE.Vector3 {
+  const coords = HOUSE_COORDS[houseId];
+  if (!coords) return _scratchVec.set(0, 0, 0);
+  return _scratchVec.set(coords[0], coords[1], coords[2]).project(camera);
+}
 
 /**
  * Computes the neighbor house in the given D-pad direction.
- * - Horizontal street orientation:
- *   LEFT / RIGHT moves along the SAME ROW with cyclic wrapping (never gets stuck at dead ends).
- *   UP / DOWN moves ACROSS THE STREET to the paired opposite house.
- * - Vertical street orientation:
- *   UP / DOWN moves along the SAME ROW with cyclic wrapping.
- *   LEFT / RIGHT moves ACROSS THE STREET to the paired opposite house.
+ * - Horizontal/Diagonal street orientations (Images 1, 3, 4, 5, top-down):
+ *   LEFT / RIGHT moves strictly along the SAME ROW.
+ *   UP / DOWN moves strictly ACROSS THE STREET to opposite house.
+ *   If there is no house in that direction (e.g. DOWN when on near row, UP when on far row,
+ *   or at the end of a row), focus stays on current house (goes nowhere).
+ * - Vertical street orientation (Image 2: looking down street length):
+ *   UP / DOWN moves along the SAME ROW.
+ *   LEFT / RIGHT moves ACROSS THE STREET.
  */
 function computeCameraRelativeNeighbor(
   currentId: string,
@@ -1433,50 +1446,156 @@ function computeCameraRelativeNeighbor(
   const streetScreenX = _projEast.x - _projWest.x;
   const streetScreenY = _projEast.y - _projWest.y;
 
-  // Project across-street axis at current column X (from North z=-4.5 to South z=4.5)
-  const colX = -12.5 + cur.col * 5.0;
-  _projNorth.set(colX, 0, -4.5).project(camera);
-  _projSouth.set(colX, 0, 4.5).project(camera);
-  const crossScreenX = _projSouth.x - _projNorth.x;
-  const crossScreenY = _projSouth.y - _projNorth.y;
+  // Street is only vertical when screen Y delta is much greater than screen X delta (e.g. looking from end of street)
+  const isVerticalStreet = Math.abs(streetScreenY) > Math.abs(streetScreenX) * 1.8;
 
-  // Determine whether street spans primarily horizontal or vertical on screen
-  const isStreetHorizontal = Math.abs(streetScreenX) >= Math.abs(streetScreenY);
+  const currentScreenPos = getHouseScreenPos(currentId, camera).clone();
+  const curRowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+  const oppRowList = cur.row === "NORTH" ? ROW_SOUTH : ROW_NORTH;
+  const oppositeId = oppRowList[cur.col];
+  const oppScreenPos = getHouseScreenPos(oppositeId, camera).clone();
 
-  if (isStreetHorizontal) {
+  if (!isVerticalStreet) {
+    // =========================================================================
+    // HORIZONTAL & DIAGONAL ORIENTATIONS (Images 1, 3, 4, 5, top-down)
+    // - LEFT / RIGHT moves strictly in the SAME ROW
+    // - UP / DOWN moves strictly ACROSS THE STREET to opposite house
+    // - NO cyclic wrap-around: if no house in direction, focus goes nowhere!
+    // =========================================================================
     if (dirName === "LEFT" || dirName === "RIGHT") {
-      // Move within the same row along the street with cyclic wrap-around (no dead ends)
-      const colStep = (dirName === "RIGHT" ? 1 : -1) * (streetScreenX >= 0 ? 1 : -1);
-      const nextCol = (cur.col + colStep + 6) % 6;
-      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
-      return rowList[nextCol];
-    } else {
-      // UP / DOWN moves across the street to the opposite row
-      const wantSouth = dirName === "UP" ? (crossScreenY > 0) : (crossScreenY < 0);
-      let targetRow: "NORTH" | "SOUTH" = wantSouth ? "SOUTH" : "NORTH";
-      // If already on the target row, cross to opposite row so every press navigates
-      if (targetRow === cur.row) {
-        targetRow = cur.row === "NORTH" ? "SOUTH" : "NORTH";
+      let bestCandidate: string = currentId;
+
+      if (dirName === "LEFT") {
+        // Find neighbor in same row that is strictly to the left on screen (screenX < currentScreenPos.x)
+        let minDiff = 0;
+        if (cur.col > 0) {
+          const leftId = curRowList[cur.col - 1];
+          const pos = getHouseScreenPos(leftId, camera);
+          const diff = pos.x - currentScreenPos.x;
+          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
+            minDiff = diff;
+            bestCandidate = leftId;
+          }
+        }
+        if (cur.col < 5) {
+          const rightId = curRowList[cur.col + 1];
+          const pos = getHouseScreenPos(rightId, camera);
+          const diff = pos.x - currentScreenPos.x;
+          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
+            minDiff = diff;
+            bestCandidate = rightId;
+          }
+        }
+      } else {
+        // RIGHT: find neighbor in same row strictly to the right on screen (screenX > currentScreenPos.x)
+        let maxDiff = 0;
+        if (cur.col > 0) {
+          const leftId = curRowList[cur.col - 1];
+          const pos = getHouseScreenPos(leftId, camera);
+          const diff = pos.x - currentScreenPos.x;
+          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
+            maxDiff = diff;
+            bestCandidate = leftId;
+          }
+        }
+        if (cur.col < 5) {
+          const rightId = curRowList[cur.col + 1];
+          const pos = getHouseScreenPos(rightId, camera);
+          const diff = pos.x - currentScreenPos.x;
+          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
+            maxDiff = diff;
+            bestCandidate = rightId;
+          }
+        }
       }
-      const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
-      return targetRowList[cur.col];
+      return bestCandidate;
+    } else {
+      // UP / DOWN across the street:
+      // In Three.js screen space, +Y is UP (top of screen / further into screen), -Y is DOWN (bottom / closer)
+      const dy = oppScreenPos.y - currentScreenPos.y;
+      if (dirName === "UP") {
+        // Only move if opposite house is higher on screen (in front / farther row)
+        if (dy > 0.01) {
+          return oppositeId;
+        }
+        // If already on the farther row, there is no house in front -> goes nowhere!
+        return currentId;
+      } else {
+        // DOWN: only move if opposite house is lower on screen (behind / nearer row)
+        if (dy < -0.01) {
+          return oppositeId;
+        }
+        // If already on the nearer row, there is no house behind -> goes nowhere!
+        return currentId;
+      }
     }
   } else {
-    // Vertical Street (Looking down street lengthwise)
+    // =========================================================================
+    // VERTICAL ORIENTATION (Image 2: looking down the street lengthwise)
+    // - UP / DOWN moves along the SAME ROW
+    // - LEFT / RIGHT moves ACROSS THE STREET
+    // - NO cyclic wrap-around: if no house in direction, focus goes nowhere!
+    // =========================================================================
     if (dirName === "UP" || dirName === "DOWN") {
-      const colStep = (dirName === "UP" ? 1 : -1) * (streetScreenY >= 0 ? 1 : -1);
-      const nextCol = (cur.col + colStep + 6) % 6;
-      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
-      return rowList[nextCol];
-    } else {
-      // LEFT / RIGHT moves across the street to the opposite row
-      const wantSouth = dirName === "RIGHT" ? (crossScreenX > 0) : (crossScreenX < 0);
-      let targetRow: "NORTH" | "SOUTH" = wantSouth ? "SOUTH" : "NORTH";
-      if (targetRow === cur.row) {
-        targetRow = cur.row === "NORTH" ? "SOUTH" : "NORTH";
+      let bestCandidate: string = currentId;
+      if (dirName === "UP") {
+        // Neighbor in same row that is higher on screen (screenY > currentScreenPos.y)
+        let maxDiff = 0;
+        if (cur.col > 0) {
+          const prevId = curRowList[cur.col - 1];
+          const pos = getHouseScreenPos(prevId, camera);
+          const diff = pos.y - currentScreenPos.y;
+          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
+            maxDiff = diff;
+            bestCandidate = prevId;
+          }
+        }
+        if (cur.col < 5) {
+          const nextId = curRowList[cur.col + 1];
+          const pos = getHouseScreenPos(nextId, camera);
+          const diff = pos.y - currentScreenPos.y;
+          if (diff > 0.01 && (maxDiff === 0 || diff > maxDiff)) {
+            maxDiff = diff;
+            bestCandidate = nextId;
+          }
+        }
+      } else {
+        // DOWN: Neighbor in same row that is lower on screen (screenY < currentScreenPos.y)
+        let minDiff = 0;
+        if (cur.col > 0) {
+          const prevId = curRowList[cur.col - 1];
+          const pos = getHouseScreenPos(prevId, camera);
+          const diff = pos.y - currentScreenPos.y;
+          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
+            minDiff = diff;
+            bestCandidate = prevId;
+          }
+        }
+        if (cur.col < 5) {
+          const nextId = curRowList[cur.col + 1];
+          const pos = getHouseScreenPos(nextId, camera);
+          const diff = pos.y - currentScreenPos.y;
+          if (diff < -0.01 && (minDiff === 0 || diff < minDiff)) {
+            minDiff = diff;
+            bestCandidate = nextId;
+          }
+        }
       }
-      const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
-      return targetRowList[cur.col];
+      return bestCandidate;
+    } else {
+      // LEFT / RIGHT across the street:
+      const dx = oppScreenPos.x - currentScreenPos.x;
+      if (dirName === "LEFT") {
+        if (dx < -0.01) {
+          return oppositeId;
+        }
+        return currentId;
+      } else {
+        if (dx > 0.01) {
+          return oppositeId;
+        }
+        return currentId;
+      }
     }
   }
 }
@@ -1501,14 +1620,22 @@ function ControllerFocusRing({
     }
   });
 
-  const targetCoords = focusedId ? HOUSE_COORDS[focusedId] : null;
-  const isVisible = Boolean(targetCoords && focusedId !== selectedId);
+  useEffect(() => {
+    if (ringRef.current) {
+      const initId = focusedId || "C1";
+      const coords = HOUSE_COORDS[initId];
+      if (coords) {
+        ringRef.current.position.set(coords[0], 0.06, coords[2]);
+      }
+    }
+  }, []);
+
+  const isVisible = Boolean(focusedId && focusedId !== selectedId);
   const isProsumer = focusedId ? focusedId.startsWith("P") : false;
 
   return (
     <group
       ref={ringRef}
-      position={targetCoords ? [targetCoords[0], 0.06, targetCoords[2]] : [0, -100, 0]}
       visible={isVisible}
     >
       {/* Outer Pulse Ring */}
@@ -1545,6 +1672,7 @@ interface GamepadSpatialNavigatorProps {
   onFocusChange: (houseId: string) => void;
   onSelectHouse: (houseId: string) => void;
   onResetView: () => void;
+  onResetCameraView: () => void;
   onToggleCutLine: (house: HouseLiveState) => void;
   onRequestBackup: (house: HouseLiveState) => void;
   onControllerStateChange: React.Dispatch<React.SetStateAction<GamepadHudState>>;
@@ -1560,6 +1688,7 @@ function GamepadSpatialNavigator({
   onFocusChange,
   onSelectHouse,
   onResetView,
+  onResetCameraView,
   onToggleCutLine,
   onRequestBackup,
   onControllerStateChange,
@@ -1581,13 +1710,32 @@ function GamepadSpatialNavigator({
     cross: false,
     circle: false,
     triangle: false,
+    options: false,
+  });
+  const prevStickClicks = useRef({
+    both: false,
   });
   const prevDirectionRef = useRef<string | null>(null);
   const hasControllerRef = useRef(false);
-  const focusedIdRef = useRef<string | null>(controllerFocusedId);
-  focusedIdRef.current = controllerFocusedId;
+
+  // Authoritative focus ID ref to eliminate any asynchronous React state race-conditions or backward flashing
+  const focusedIdRef = useRef<string | null>(controllerFocusedId || "C1");
+  const lastControllerIdRef = useRef<string | null>(controllerFocusedId);
   const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
   selectedHouseRef.current = selectedHouse;
+
+  useEffect(() => {
+    // Only sync if controllerFocusedId changed from external mouse interaction
+    if (controllerFocusedId && controllerFocusedId !== lastControllerIdRef.current) {
+      focusedIdRef.current = controllerFocusedId;
+      lastControllerIdRef.current = controllerFocusedId;
+      const coords = HOUSE_COORDS[controllerFocusedId];
+      if (coords && focusRingRef.current) {
+        focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+        focusRingRef.current.visible = true;
+      }
+    }
+  }, [controllerFocusedId, focusRingRef]);
 
   // Listen to Gamepad connection events
   useEffect(() => {
@@ -1628,7 +1776,7 @@ function GamepadSpatialNavigator({
     let gp: Gamepad | null = null;
     for (let i = 0; i < gamepads.length; i++) {
       const g = gamepads[i];
-      if (g && g.connected && (g.buttons.length >= 12 || g.axes.length >= 4)) {
+      if (g && g.connected && (g.buttons.length >= 10 || g.axes.length >= 4)) {
         gp = g;
         break;
       }
@@ -1705,10 +1853,10 @@ function GamepadSpatialNavigator({
         break;
       } else if (isPressed && wasPressed) {
         const holdDuration = now - buttonHoldTimes.current[d];
-        // Snappy initial repeat threshold (200ms), followed by rapid 70ms repeat
-        if (holdDuration > 200) {
+        // Snappy initial repeat threshold (220ms), followed by rapid 75ms repeat
+        if (holdDuration > 220) {
           triggeredDir = d;
-          buttonHoldTimes.current[d] = now - 130;
+          buttonHoldTimes.current[d] = now - 145;
           break;
         }
       } else if (!isPressed && wasPressed) {
@@ -1719,11 +1867,12 @@ function GamepadSpatialNavigator({
     prevButtonStates.current = currentStates;
 
     if (triggeredDir) {
-      const current = focusedIdRef.current;
-      const nextId = current ? computeCameraRelativeNeighbor(current, triggeredDir, camera) : "C1";
+      const current = focusedIdRef.current || "C1";
+      const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
 
-      if (nextId) {
+      if (nextId && nextId !== current) {
         focusedIdRef.current = nextId;
+        lastControllerIdRef.current = nextId;
         const coords = HOUSE_COORDS[nextId];
         // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
         if (coords && focusRingRef.current) {
@@ -1752,11 +1901,12 @@ function GamepadSpatialNavigator({
     }
 
     // =========================================================================
-    // 2. ACTION BUTTONS: X (Cross / btn 0), Circle (btn 1), Triangle (btn 3)
+    // 2. ACTION BUTTONS: X (Cross / btn 0), Circle (btn 1), Triangle (btn 3), Options (btn 9)
     // =========================================================================
     const btnCross = Boolean(gp.buttons[0]?.pressed || (gp.buttons[0]?.value ?? 0) > 0.5);
     const btnCircle = Boolean(gp.buttons[1]?.pressed || (gp.buttons[1]?.value ?? 0) > 0.5);
     const btnTriangle = Boolean(gp.buttons[3]?.pressed || (gp.buttons[3]?.value ?? 0) > 0.5);
+    const btnOptions = Boolean(gp.buttons[9]?.pressed || (gp.buttons[9]?.value ?? 0) > 0.5);
 
     // 2A. X Button (Cross):
     // - If no house is open: opens the currently focused house (or C1)
@@ -1766,6 +1916,7 @@ function GamepadSpatialNavigator({
       if (!currentSelected) {
         const targetId = focusedIdRef.current || "C1";
         focusedIdRef.current = targetId;
+        lastControllerIdRef.current = targetId;
         const coords = HOUSE_COORDS[targetId];
         if (coords && focusRingRef.current) {
           focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
@@ -1791,26 +1942,64 @@ function GamepadSpatialNavigator({
       }
     }
 
+    // 2D. Options Button (btn 9): Toggles settings modal from header
+    if (btnOptions && !prevActionButtons.current.options) {
+      window.dispatchEvent(new CustomEvent("microgrid_toggle_settings"));
+    }
+
     prevActionButtons.current = {
       cross: btnCross,
       circle: btnCircle,
       triangle: btnTriangle,
+      options: btnOptions,
     };
 
     // =========================================================================
-    // 3. JOYSTICK NAVIGATION: Left Stick (Pan/Move) & Right Stick (Orbit/Rotate)
+    // 3. JOYSTICK & TRIGGER NAVIGATION
+    // - Left Stick: Pan/Move (right click drag)
+    // - Right Stick: Orbit/Rotate (left click drag)
+    // - L2 / R2: Analog Zoom In (R2) / Zoom Out (L2)
+    // - L3 + R3 pressed together: Reset camera view to overhead look
     // =========================================================================
     const controls = controlsRef.current;
     if (controls) {
+      // 3A. L3 + R3 pressed together: Reset view to overhead look (view only, not grid)
+      const btnL3 = Boolean(gp.buttons[10]?.pressed || (gp.buttons[10]?.value ?? 0) > 0.5);
+      const btnR3 = Boolean(gp.buttons[11]?.pressed || (gp.buttons[11]?.value ?? 0) > 0.5);
+      const bothSticksClicked = btnL3 && btnR3;
+
+      if (bothSticksClicked && !prevStickClicks.current.both) {
+        onResetCameraView();
+      }
+      prevStickClicks.current.both = bothSticksClicked;
+
+      // 3B. Analog Triggers: R2 (btn 7) Zoom In, L2 (btn 6) Zoom Out
+      const l2Val = gp.buttons[6]?.value ?? (gp.buttons[6]?.pressed ? 1.0 : 0.0);
+      const r2Val = gp.buttons[7]?.value ?? (gp.buttons[7]?.pressed ? 1.0 : 0.0);
+
+      if (l2Val > 0.05 || r2Val > 0.05) {
+        controls.dispatchEvent({ type: "start", target: controls });
+        const zoomSpeed = 22.0 * Math.min(delta, 0.1);
+        const zoomDelta = (r2Val - l2Val) * zoomSpeed; // R2 > 0 -> zoom in (closer), L2 > 0 -> zoom out (further)
+
+        const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+        const curDist = offset.length();
+        const nextDist = THREE.MathUtils.clamp(curDist - zoomDelta, 6.0, 38.0);
+        if (curDist > 0.001) {
+          offset.multiplyScalar(nextDist / curDist);
+          camera.position.copy(controls.target).add(offset);
+          controls.update();
+        }
+      }
+
       const DEADZONE = 0.12;
 
-      // 3A. Left Stick (Axes 0 & 1): Scene movement / Pan (equivalent to right mouse drag)
+      // 3C. Left Stick (Axes 0 & 1): Scene movement / Pan (equivalent to right mouse drag)
       const leftX = gp.axes[0] ?? 0;
       const leftY = gp.axes[1] ?? 0;
       const leftDist = Math.hypot(leftX, leftY);
 
       if (leftDist > DEADZONE) {
-        // Cancel any active automated camera lerp transition
         controls.dispatchEvent({ type: "start", target: controls });
 
         const factor = (leftDist - DEADZONE) / (1 - DEADZONE);
@@ -1828,7 +2017,6 @@ function GamepadSpatialNavigator({
         controls.target.add(panOffset);
         camera.position.add(panOffset);
 
-        // Keep target within microgrid scene bounds
         controls.target.x = THREE.MathUtils.clamp(controls.target.x, -22.0, 22.0);
         controls.target.y = THREE.MathUtils.clamp(controls.target.y, 0.0, 4.0);
         controls.target.z = THREE.MathUtils.clamp(controls.target.z, -10.0, 10.0);
@@ -1836,10 +2024,9 @@ function GamepadSpatialNavigator({
         controls.update();
       }
 
-      // 3B. Right Stick (Axes 2 & 3): Rotate view / Orbit (equivalent to left mouse drag)
+      // 3D. Right Stick (Axes 2 & 3): Rotate view / Orbit (equivalent to left mouse drag)
       let rightX = gp.axes[2] ?? 0;
       let rightY = gp.axes[3] ?? 0;
-      // Fallback for drivers that map right stick to axes[4] / axes[5]
       if (Math.abs(rightX) < 0.01 && Math.abs(rightY) < 0.01 && gp.axes.length > 5) {
         if (Math.abs(gp.axes[4] ?? 0) > 0.1 || Math.abs(gp.axes[5] ?? 0) > 0.1) {
           rightX = gp.axes[4] ?? 0;
@@ -1849,7 +2036,6 @@ function GamepadSpatialNavigator({
 
       const rightDist = Math.hypot(rightX, rightY);
       if (rightDist > DEADZONE) {
-        // Cancel any active automated camera lerp transition
         controls.dispatchEvent({ type: "start", target: controls });
 
         const factor = (rightDist - DEADZONE) / (1 - DEADZONE);
@@ -1860,10 +2046,7 @@ function GamepadSpatialNavigator({
         const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
         const spherical = new THREE.Spherical().setFromVector3(offset);
 
-        // Horizontal orbit (azimuth)
         spherical.theta -= normX * rotSpeed;
-
-        // Vertical orbit (polar angle / elevation)
         spherical.phi += normY * rotSpeed;
         const minPhi = controls.minPolarAngle || (Math.PI / 8);
         const maxPhi = controls.maxPolarAngle || (Math.PI / 2.18);
@@ -1907,6 +2090,16 @@ export default function NeighborhoodMicrogrid3D() {
   const [selectedHouseIds, setSelectedHouseIds] = useState<string[]>([]);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [controllerFocusedId, setControllerFocusedId] = useState<string | null>(null);
+  const [cameraResetTrigger, setCameraResetTrigger] = useState(0);
+
+  const handleResetCameraView = useCallback(() => {
+    // Only resets camera view to overhead look, does not touch the grid or cut lines
+    setSelectedHouseIds([]);
+    setIsRequestModalOpen(false);
+    setActiveTrade(null);
+    setTradeSuccess(false);
+    setCameraResetTrigger((c) => c + 1);
+  }, []);
   const [gamepadState, setGamepadState] = useState<GamepadHudState>({
     connected: false,
     id: "",
@@ -2229,6 +2422,7 @@ export default function NeighborhoodMicrogrid3D() {
             setTradeSuccess(false);
             setSettledReceipt(null);
           }}
+          onResetCameraView={handleResetCameraView}
           onToggleCutLine={(house) => {
             const hid = house.householdId;
             const isCut = cutLines.includes(hid) || house.powerState === "line_cut";
@@ -2278,7 +2472,11 @@ export default function NeighborhoodMicrogrid3D() {
         />
 
         {/* Camera smooth transition controller with boundary clamping */}
-        <CameraController selectedHouse={selectedHouse} controlsRef={controlsRef} />
+        <CameraController 
+          selectedHouse={selectedHouse} 
+          controlsRef={controlsRef} 
+          resetViewTrigger={cameraResetTrigger} 
+        />
 
         {/* 1. Minecraft Finite Voxel Terrain Foundation & Perimeter Hills */}
         <MinecraftVoxelTerrain />
@@ -2392,7 +2590,9 @@ export default function NeighborhoodMicrogrid3D() {
                   <span className="text-slate-400">✕ <span className="text-slate-300">{selectedHouse ? "Cut Line" : "Open"}</span></span>
                   <span className="text-slate-400">○ <span className="text-slate-300">Reset</span></span>
                   <span className="text-slate-400">△ <span className="text-slate-300">Backup</span></span>
-                  <span className="text-slate-500">| L-Stick Pan • R-Stick Orbit</span>
+                  <span className="text-slate-400">L2/R2 <span className="text-slate-300">Zoom</span></span>
+                  <span className="text-slate-400">L3+R3 <span className="text-slate-300">Overhead</span></span>
+                  <span className="text-slate-400">Options <span className="text-slate-300">Settings</span></span>
                 </div>
               </div>
             ) : (
@@ -2400,7 +2600,7 @@ export default function NeighborhoodMicrogrid3D() {
             )}
           </div>
 
-          {selectedHouseIds.length > 0 && (
+          {selectedHouseIds.length > 0 ? (
             <button
               onClick={() => {
                 setSelectedHouseIds([]);
@@ -2414,6 +2614,20 @@ export default function NeighborhoodMicrogrid3D() {
               {gamepadState.connected && (
                 <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 text-[10px] font-bold border border-rose-500/20">
                   ○ Circle
+                </span>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleResetCameraView}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-98"
+              title="Reset camera angle to overhead look (R3 + L3 on PS4 controller)"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
+              <span>Reset View</span>
+              {gamepadState.connected && (
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 text-[10px] font-bold border border-blue-500/20">
+                  L3+R3
                 </span>
               )}
             </button>

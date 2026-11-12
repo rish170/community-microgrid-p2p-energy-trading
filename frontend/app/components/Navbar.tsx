@@ -55,6 +55,16 @@ export default function Navbar() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleToggleSettings = () => {
+      setSettingsOpen((prev) => !prev);
+    };
+    window.addEventListener("microgrid_toggle_settings", handleToggleSettings);
+    return () => {
+      window.removeEventListener("microgrid_toggle_settings", handleToggleSettings);
+    };
+  }, []);
+
   // Close settings popover on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
