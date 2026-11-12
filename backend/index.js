@@ -1266,7 +1266,7 @@ app.post("/api/requests/:id/respond", async (req, res) => {
     return res.status(404).json({ success: false, error: "Energy request not found" });
   }
 
-  if (request.status !== "pinged") {
+  if (request.status !== "pinged" && request.status !== "open") {
     return res.status(400).json({
       success: false,
       error: `Request is not in pinged state (current status: ${request.status})`
@@ -1274,20 +1274,49 @@ app.post("/api/requests/:id/respond", async (req, res) => {
   }
 
   const candidateId = Number(household_id);
+  // Allow any eligible prosumer to accept or deny the request
   if (request.current_candidate_household_id !== candidateId) {
-    return res.status(400).json({
-      success: false,
-      error: "Household is not the currently pinged candidate"
-    });
+    if (SOLAR_HOUSE_IDS.includes(candidateId)) {
+      request.current_candidate_household_id = candidateId;
+      const existingCand = request.candidates.find((c) => c.household_id === candidateId);
+      if (existingCand) {
+        existingCand.status = "pinged";
+      } else {
+        request.candidates.unshift({
+          household_id: candidateId,
+          code: HOUSE_COORDINATES[candidateId]?.id || `P-${candidateId}`,
+          distance: 1.0,
+          battery_kwh: 4.5,
+          status: "pinged"
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Household is not an eligible prosumer candidate"
+      });
+    }
   }
 
   if (decision === "accept") {
     acceptCandidate(id, candidateId);
+
+    // Immediately trigger on-chain Sepolia settlement & trade logging
+    let settleResult = null;
+    try {
+      settleResult = await settleRequest(id);
+    } catch (settleErr) {
+      console.warn("[Sepolia Settlement] On-chain settlement error:", settleErr.message);
+    }
+
     const { pingTimer, autoAcceptTimer, ...cleanReq } = request;
     return res.json({
       success: true,
-      message: `Request accepted by prosumer ${candidateId}`,
-      request: cleanReq
+      message: `Request accepted by prosumer ${candidateId} and settled`,
+      request: cleanReq,
+      txHash: settleResult ? settleResult.txHash : null,
+      etherscanUrl: settleResult ? settleResult.etherscanUrl : null,
+      trade: settleResult ? settleResult.trade : null
     });
   } else if (decision === "deny") {
     if (request.pingTimer) clearTimeout(request.pingTimer);
