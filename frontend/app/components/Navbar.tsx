@@ -42,11 +42,10 @@ export default function Navbar() {
   }, [settingsOpen]);
 
   const navLinks = [
-    { label: "Overview", href: "#overview" },
-    { label: "P2P Simulator", href: "#demo", isLive: true },
-    { label: "Order Book", href: "#orderbook" },
-    { label: "Forecasts", href: "#forecast" },
-    { label: "Dashboard", href: "#dashboard" },
+    { label: "Overview", href: "/#overview" },
+    { label: "Order Book", href: "/dashboard#orderbook" },
+    { label: "Forecasts", href: "/#forecast" },
+    { label: "Dashboard", href: "/dashboard#dashboard" },
   ];
 
   return (
@@ -68,16 +67,13 @@ export default function Navbar() {
           {/* Navigation Links */}
           <nav className="hidden md:flex items-center gap-7 lg:gap-8">
             {navLinks.map((item) => (
-              <a
+              <Link
                 key={item.label}
                 href={item.href}
                 className="text-[15px] font-semibold text-[#000000] hover:text-[#16A34A] transition-colors flex items-center gap-2"
               >
-                {item.isLive && (
-                  <span className="w-2 h-2 rounded-full bg-[#16A34A] animate-pulse" />
-                )}
                 {item.label}
-              </a>
+              </Link>
             ))}
           </nav>
 
@@ -193,14 +189,14 @@ export default function Navbar() {
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-[#E2E8F0] bg-white/98 backdrop-blur-xl p-4 shadow-lg space-y-2">
           {navLinks.map((item) => (
-            <a
+            <Link
               key={item.label}
               href={item.href}
               onClick={() => setMobileMenuOpen(false)}
               className="block px-3 py-2 rounded-xl text-sm font-semibold text-[#000000] hover:text-[#16A34A] hover:bg-[#F8FAFC] transition"
             >
               {item.label}
-            </a>
+            </Link>
           ))}
           <Link
             href="/admin"
