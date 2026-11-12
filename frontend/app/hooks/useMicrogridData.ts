@@ -849,6 +849,32 @@ function useMicrogridDataHookInternal() {
                 };
               })
             );
+          } else if (row && (row.scope === "house" || row.event_type === "line_cut" || row.event_type === "line_restore")) {
+            const targetId = Number(row.household_id);
+            if (targetId) {
+              const isCut = (row.event_type === "line_cut" && !row.ended_at && payload.eventType !== "DELETE");
+              setCutLines((prev) => {
+                const updated = isCut
+                  ? Array.from(new Set([...prev, targetId]))
+                  : prev.filter((id) => id !== targetId);
+                cutLinesRef.current = updated;
+                return updated;
+              });
+              setHouses((prev) =>
+                prev.map((h) => {
+                  if (h.householdId !== targetId) return h;
+                  const isSolar = h.type === "prosumer";
+                  const pState: HouseLiveState["powerState"] = isCut
+                    ? "line_cut"
+                    : (isSocietyOutageRef.current ? (isSolar ? (h.batteryKwh > 0 ? "battery" : "blackout") : "blackout") : "grid");
+                  return {
+                    ...h,
+                    powerState: pState,
+                    isOutage: pState === "blackout" || pState === "line_cut",
+                  };
+                })
+              );
+            }
           }
         }
       )
@@ -876,10 +902,22 @@ function useMicrogridDataHookInternal() {
             safePowerState = CONSUMER_HOUSEHOLD_IDS.includes(row.household_id)
               ? "blackout"
               : (Number(row.battery_kwh) > 0 ? "battery" : "blackout");
-          } else if (isCut) {
+          } else if (row.power_state === "line_cut" || isCut) {
             safePowerState = "line_cut";
-          } else if (safePowerState === "blackout" || safePowerState === "line_cut") {
-            safePowerState = "grid";
+            if (!cutLinesRef.current.includes(row.household_id)) {
+              const next = [...cutLinesRef.current, row.household_id];
+              cutLinesRef.current = next;
+              setCutLines(next);
+            }
+          } else {
+            if (cutLinesRef.current.includes(row.household_id)) {
+              const next = cutLinesRef.current.filter((id) => id !== row.household_id);
+              cutLinesRef.current = next;
+              setCutLines(next);
+            }
+            if (safePowerState === "blackout" || safePowerState === "line_cut") {
+              safePowerState = "grid";
+            }
           }
 
           setHouses((prev) =>
