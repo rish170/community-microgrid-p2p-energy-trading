@@ -138,3 +138,4 @@ export function playShiftHaptic() {
   // Quick, punchy, tactile click
   triggerRumble(70, settings.strongMagnitude * 0.7, settings.weakMagnitude);
 }
+

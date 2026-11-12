@@ -1471,14 +1471,28 @@ function computeCameraRelativeNeighbor(
 interface GamepadSpatialNavigatorProps {
   houses: HouseLiveState[];
   controllerFocusedId: string | null;
+  selectedHouse: HouseLiveState | null;
+  cutLines: number[];
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
   onFocusChange: (houseId: string) => void;
+  onSelectHouse: (houseId: string) => void;
+  onResetView: () => void;
+  onToggleCutLine: (house: HouseLiveState) => void;
+  onRequestBackup: (house: HouseLiveState) => void;
   onControllerStateChange: React.Dispatch<React.SetStateAction<GamepadHudState>>;
 }
 
 function GamepadSpatialNavigator({
   houses,
   controllerFocusedId,
+  selectedHouse,
+  cutLines,
+  controlsRef,
   onFocusChange,
+  onSelectHouse,
+  onResetView,
+  onToggleCutLine,
+  onRequestBackup,
   onControllerStateChange,
 }: GamepadSpatialNavigatorProps) {
   const { camera } = useThree();
@@ -1494,9 +1508,17 @@ function GamepadSpatialNavigator({
     LEFT: 0,
     RIGHT: 0,
   });
+  const prevActionButtons = useRef({
+    cross: false,
+    circle: false,
+    triangle: false,
+  });
+  const prevDirectionRef = useRef<string | null>(null);
   const hasControllerRef = useRef(false);
   const focusedIdRef = useRef<string | null>(controllerFocusedId);
   focusedIdRef.current = controllerFocusedId;
+  const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
+  selectedHouseRef.current = selectedHouse;
 
   // Listen to Gamepad connection events
   useEffect(() => {
@@ -1529,53 +1551,8 @@ function GamepadSpatialNavigator({
     };
   }, [onControllerStateChange]);
 
-  // Optional Keyboard Arrow Keys support for developer testing
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      let dir: "UP" | "DOWN" | "LEFT" | "RIGHT" | null = null;
-      if (e.key === "ArrowUp") dir = "UP";
-      else if (e.key === "ArrowDown") dir = "DOWN";
-      else if (e.key === "ArrowLeft") dir = "LEFT";
-      else if (e.key === "ArrowRight") dir = "RIGHT";
-
-      if (dir) {
-        e.preventDefault();
-        const current = focusedIdRef.current;
-        if (!current) {
-          onFocusChange("C1");
-          playShiftHaptic();
-        } else {
-          const nextId = computeCameraRelativeNeighbor(current, dir, camera);
-          if (nextId) {
-            onFocusChange(nextId);
-            playShiftHaptic();
-          }
-        }
-        onControllerStateChange((prev) => ({
-          ...prev,
-          activeDirection: dir,
-          lastActiveTime: Date.now(),
-        }));
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
-        onControllerStateChange((prev) => ({ ...prev, activeDirection: null }));
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, [camera, houses, onFocusChange, onControllerStateChange]);
-
-  // Gamepad Polling Loop via Three.js useFrame
-  useFrame(() => {
+  // Gamepad Polling Loop via Three.js useFrame (60/120fps)
+  useFrame((state, delta) => {
     if (typeof navigator === "undefined" || !navigator.getGamepads) return;
 
     const gamepads = navigator.getGamepads();
@@ -1609,25 +1586,16 @@ function GamepadSpatialNavigator({
       }));
     }
 
-    // Standard DualShock 4 mapping:
-    // buttons[12]: D-pad Up
-    // buttons[13]: D-pad Down
-    // buttons[14]: D-pad Left
-    // buttons[15]: D-pad Right
-    const btnUp = (gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
-    const btnDown = (gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
-    const btnLeft = (gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
-    const btnRight = (gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
+    // =========================================================================
+    // 1. STRICT D-PAD FOCUS NAVIGATION (Instant response, zero lag, no sticks/arrows)
+    // =========================================================================
+    // DualShock 4 D-pad mapping: buttons[12]=Up, [13]=Down, [14]=Left, [15]=Right
+    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
+    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
+    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
+    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
 
-    // Left analog stick (axes[0] / axes[1]) with deadzone 0.55
-    const axisX = gp.axes[0] ?? 0;
-    const axisY = gp.axes[1] ?? 0;
-    const stickLeft = axisX < -0.55;
-    const stickRight = axisX > 0.55;
-    const stickUp = axisY < -0.55;
-    const stickDown = axisY > 0.55;
-
-    // POV Hat switch on axes[9] fallback if present
+    // Optional POV Hat switch on axes[9] fallback if driver uses hat switch for D-pad
     let hatUp = false, hatDown = false, hatLeft = false, hatRight = false;
     if (gp.axes.length > 9) {
       const hat = Number(gp.axes[9]?.toFixed(2));
@@ -1641,10 +1609,10 @@ function GamepadSpatialNavigator({
       else if (hat >= 0.98 && hat <= 1.05) { hatUp = true; hatLeft = true; }
     }
 
-    const isUp = btnUp || stickUp || hatUp;
-    const isDown = btnDown || stickDown || hatDown;
-    const isLeft = btnLeft || stickLeft || hatLeft;
-    const isRight = btnRight || stickRight || hatRight;
+    const isUp = btnUp || hatUp;
+    const isDown = btnDown || hatDown;
+    const isLeft = btnLeft || hatLeft;
+    const isRight = btnRight || hatRight;
 
     const now = performance.now();
     const dirs: ("UP" | "DOWN" | "LEFT" | "RIGHT")[] = ["UP", "DOWN", "LEFT", "RIGHT"];
@@ -1662,14 +1630,16 @@ function GamepadSpatialNavigator({
       const wasPressed = prevButtonStates.current[d];
 
       if (isPressed && !wasPressed) {
+        // Immediate, instant trigger with 0ms delay on press
         triggeredDir = d;
         buttonHoldTimes.current[d] = now;
         break;
       } else if (isPressed && wasPressed) {
         const holdDuration = now - buttonHoldTimes.current[d];
-        if (holdDuration > 380) {
+        // Snappy initial repeat threshold (240ms), followed by rapid 80ms repeat
+        if (holdDuration > 240) {
           triggeredDir = d;
-          buttonHoldTimes.current[d] = now - 180;
+          buttonHoldTimes.current[d] = now - 160;
           break;
         }
       } else if (!isPressed && wasPressed) {
@@ -1682,32 +1652,160 @@ function GamepadSpatialNavigator({
     if (triggeredDir) {
       const current = focusedIdRef.current;
       if (!current) {
-        // Any button on d-pad pressed: focus ring appears on house C1
+        // Any button on d-pad pressed: focus ring appears on house C1 instantly
+        focusedIdRef.current = "C1";
         onFocusChange("C1");
         playShiftHaptic();
       } else {
         // Spatial navigation relative to viewer's current camera angle
         const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
-        if (nextId) {
+        if (nextId && nextId !== current) {
+          focusedIdRef.current = nextId;
           onFocusChange(nextId);
           playShiftHaptic();
         }
       }
 
-      onControllerStateChange((prev) => ({
-        ...prev,
-        connected: true,
-        id: gp?.id || "DualShock 4 Wireless Controller",
-        activeDirection: triggeredDir,
-        lastActiveTime: Date.now(),
-      }));
+      if (prevDirectionRef.current !== triggeredDir) {
+        prevDirectionRef.current = triggeredDir;
+        onControllerStateChange((prev) => ({
+          ...prev,
+          connected: true,
+          id: gp?.id || "DualShock 4 Wireless Controller",
+          activeDirection: triggeredDir,
+          lastActiveTime: Date.now(),
+        }));
+      }
     } else {
-      onControllerStateChange((prev) => {
-        if (prev.activeDirection && !isUp && !isDown && !isLeft && !isRight) {
-          return { ...prev, activeDirection: null };
+      if (prevDirectionRef.current !== null && !isUp && !isDown && !isLeft && !isRight) {
+        prevDirectionRef.current = null;
+        onControllerStateChange((prev) => ({ ...prev, activeDirection: null }));
+      }
+    }
+
+    // =========================================================================
+    // 2. ACTION BUTTONS: X (Cross / btn 0), Circle (btn 1), Triangle (btn 3)
+    // =========================================================================
+    const btnCross = Boolean(gp.buttons[0]?.pressed || (gp.buttons[0]?.value ?? 0) > 0.5);
+    const btnCircle = Boolean(gp.buttons[1]?.pressed || (gp.buttons[1]?.value ?? 0) > 0.5);
+    const btnTriangle = Boolean(gp.buttons[3]?.pressed || (gp.buttons[3]?.value ?? 0) > 0.5);
+
+    // 2A. X Button (Cross):
+    // - If no house is open: opens the currently focused house (or C1)
+    // - If a house is open: toggles cut line (cuts if active, restores if cut)
+    if (btnCross && !prevActionButtons.current.cross) {
+      playShiftHaptic();
+      const currentSelected = selectedHouseRef.current;
+      if (!currentSelected) {
+        const targetId = focusedIdRef.current || "C1";
+        focusedIdRef.current = targetId;
+        onFocusChange(targetId);
+        onSelectHouse(targetId);
+      } else {
+        onToggleCutLine(currentSelected);
+      }
+    }
+
+    // 2B. Circle Button: Goes back to the complete simulation view (reset)
+    if (btnCircle && !prevActionButtons.current.circle) {
+      playShiftHaptic();
+      onResetView();
+    }
+
+    // 2C. Triangle Button: Triggers "Request Energy Backup" button when house is cut off
+    if (btnTriangle && !prevActionButtons.current.triangle) {
+      const currentSelected = selectedHouseRef.current;
+      if (currentSelected) {
+        playShiftHaptic();
+        onRequestBackup(currentSelected);
+      }
+    }
+
+    prevActionButtons.current = {
+      cross: btnCross,
+      circle: btnCircle,
+      triangle: btnTriangle,
+    };
+
+    // =========================================================================
+    // 3. JOYSTICK NAVIGATION: Left Stick (Pan/Move) & Right Stick (Orbit/Rotate)
+    // =========================================================================
+    const controls = controlsRef.current;
+    if (controls) {
+      const DEADZONE = 0.12;
+
+      // 3A. Left Stick (Axes 0 & 1): Scene movement / Pan (equivalent to right mouse drag)
+      const leftX = gp.axes[0] ?? 0;
+      const leftY = gp.axes[1] ?? 0;
+      const leftDist = Math.hypot(leftX, leftY);
+
+      if (leftDist > DEADZONE) {
+        // Cancel any active automated camera lerp transition
+        controls.dispatchEvent({ type: "start", target: controls });
+
+        const factor = (leftDist - DEADZONE) / (1 - DEADZONE);
+        const normX = (leftX / leftDist) * factor;
+        const normY = (leftY / leftDist) * factor;
+
+        const panSpeed = 16.0 * Math.min(delta, 0.1);
+        const rightVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+        const upVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+
+        const panOffset = new THREE.Vector3();
+        panOffset.addScaledVector(rightVector, normX * panSpeed);
+        panOffset.addScaledVector(upVector, -normY * panSpeed);
+
+        controls.target.add(panOffset);
+        camera.position.add(panOffset);
+
+        // Keep target within microgrid scene bounds
+        controls.target.x = THREE.MathUtils.clamp(controls.target.x, -22.0, 22.0);
+        controls.target.y = THREE.MathUtils.clamp(controls.target.y, 0.0, 4.0);
+        controls.target.z = THREE.MathUtils.clamp(controls.target.z, -10.0, 10.0);
+
+        controls.update();
+      }
+
+      // 3B. Right Stick (Axes 2 & 3): Rotate view / Orbit (equivalent to left mouse drag)
+      let rightX = gp.axes[2] ?? 0;
+      let rightY = gp.axes[3] ?? 0;
+      // Fallback for drivers that map right stick to axes[4] / axes[5]
+      if (Math.abs(rightX) < 0.01 && Math.abs(rightY) < 0.01 && gp.axes.length > 5) {
+        if (Math.abs(gp.axes[4] ?? 0) > 0.1 || Math.abs(gp.axes[5] ?? 0) > 0.1) {
+          rightX = gp.axes[4] ?? 0;
+          rightY = gp.axes[5] ?? 0;
         }
-        return prev;
-      });
+      }
+
+      const rightDist = Math.hypot(rightX, rightY);
+      if (rightDist > DEADZONE) {
+        // Cancel any active automated camera lerp transition
+        controls.dispatchEvent({ type: "start", target: controls });
+
+        const factor = (rightDist - DEADZONE) / (1 - DEADZONE);
+        const normX = (rightX / rightDist) * factor;
+        const normY = (rightY / rightDist) * factor;
+
+        const rotSpeed = 2.4 * Math.min(delta, 0.1);
+        const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+
+        // Horizontal orbit (azimuth)
+        spherical.theta -= normX * rotSpeed;
+
+        // Vertical orbit (polar angle / elevation)
+        spherical.phi += normY * rotSpeed;
+        const minPhi = controls.minPolarAngle || (Math.PI / 8);
+        const maxPhi = controls.maxPolarAngle || (Math.PI / 2.18);
+        spherical.phi = THREE.MathUtils.clamp(spherical.phi, minPhi, maxPhi);
+        spherical.makeSafe();
+
+        offset.setFromSpherical(spherical);
+        camera.position.copy(controls.target).add(offset);
+        camera.lookAt(controls.target);
+
+        controls.update();
+      }
     }
   });
 
@@ -2043,11 +2141,38 @@ export default function NeighborhoodMicrogrid3D() {
         <color attach="background" args={["#DCEAF6"]} />
         <fog attach="fog" args={["#DCEAF6", 30, 58]} />
 
-        {/* Gamepad Spatial Controller Navigator (DualShock PS4 & Keyboard Arrows) */}
+        {/* Gamepad Spatial Controller Navigator (DualShock PS4) */}
         <GamepadSpatialNavigator
           houses={houses}
           controllerFocusedId={controllerFocusedId}
+          selectedHouse={selectedHouse}
+          cutLines={cutLines}
+          controlsRef={controlsRef}
           onFocusChange={(newId) => setControllerFocusedId(newId)}
+          onSelectHouse={(houseId) => handleHouseSelect(houseId, false)}
+          onResetView={() => {
+            setSelectedHouseIds([]);
+            setIsRequestModalOpen(false);
+            setActiveTrade(null);
+            setTradeSuccess(false);
+            setSettledReceipt(null);
+          }}
+          onToggleCutLine={(house) => {
+            const hid = house.householdId;
+            const isCut = cutLines.includes(hid) || house.powerState === "line_cut";
+            if (isCut) {
+              restoreLinesAction([hid]);
+            } else {
+              cutLinesAction([hid]);
+            }
+          }}
+          onRequestBackup={(house) => {
+            const isCutOrOutage = house.powerState === "line_cut" || house.powerState === "blackout" || house.isOutage || cutLines.includes(house.householdId);
+            if (house.type === "consumer" && isCutOrOutage) {
+              setModalRequesterId(house.householdId);
+              setIsRequestModalOpen(true);
+            }
+          }}
           onControllerStateChange={setGamepadState}
         />
 
@@ -2162,7 +2287,7 @@ export default function NeighborhoodMicrogrid3D() {
                 ? "bg-[#0F172A]/90 text-white border-blue-500/50 shadow-[0_4px_16px_rgba(59,130,246,0.25)]"
                 : "bg-white/90 text-[#64748B] border-[#CBD5E1]"
             }`}
-            title={gamepadState.connected ? `Connected: ${gamepadState.id}` : "Connect your PS4 DualShock controller and press any D-pad button"}
+            title={gamepadState.connected ? `Connected: ${gamepadState.id} (D-Pad: Focus, ✕: Open/Cut, ○: Reset, △: Backup, Joysticks: Pan/Rotate)` : "Connect your PS4 DualShock controller and press any D-pad button"}
           >
             <Gamepad2 className={`w-4 h-4 ${gamepadState.connected ? "text-blue-400" : "text-[#94A3B8]"}`} />
             {gamepadState.connected ? (
@@ -2182,6 +2307,12 @@ export default function NeighborhoodMicrogrid3D() {
                   <span className={`px-1 rounded ${gamepadState.activeDirection === "LEFT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>◀</span>
                   <span className={`px-1 rounded ${gamepadState.activeDirection === "RIGHT" ? "bg-cyan-400 text-black font-bold" : "text-slate-500"}`}>▶</span>
                 </div>
+                <div className="hidden xl:flex items-center gap-2 border-l border-slate-700 pl-2 text-[10px]">
+                  <span className="text-slate-400">✕ <span className="text-slate-300">{selectedHouse ? "Cut Line" : "Open"}</span></span>
+                  <span className="text-slate-400">○ <span className="text-slate-300">Reset</span></span>
+                  <span className="text-slate-400">△ <span className="text-slate-300">Backup</span></span>
+                  <span className="text-slate-500">| L-Stick Pan • R-Stick Orbit</span>
+                </div>
               </div>
             ) : (
               <span className="text-[11px] text-[#64748B] hidden sm:inline">PS4 Controller: Press D-Pad</span>
@@ -2199,6 +2330,11 @@ export default function NeighborhoodMicrogrid3D() {
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Reset View ({selectedHouseIds.length})</span>
+              {gamepadState.connected && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 text-[10px] font-bold border border-rose-500/20">
+                  ○ Circle
+                </span>
+              )}
             </button>
           )}
         </div>
@@ -2310,18 +2446,24 @@ export default function NeighborhoodMicrogrid3D() {
             {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? (
               <button
                 onClick={() => restoreLinesAction([selectedHouse.householdId])}
-                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
-                title="Reconnect utility line"
+                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                title="Reconnect utility line (or press X on controller)"
               >
                 <span>Reconnect</span>
+                {gamepadState.connected && (
+                  <span className="px-1 rounded bg-[#16A34A]/20 text-[#16A34A] font-mono text-[9px]">✕</span>
+                )}
               </button>
             ) : (
               <button
                 onClick={() => cutLinesAction([selectedHouse.householdId])}
-                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
-                title="Simulate blown line / isolate house"
+                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                title="Simulate blown line / isolate house (or press X on controller)"
               >
                 <span>Cut Line</span>
+                {gamepadState.connected && (
+                  <span className="px-1 rounded bg-[#DC2626]/20 text-[#DC2626] font-mono text-[9px]">✕</span>
+                )}
               </button>
             )}
           </div>
@@ -2420,10 +2562,17 @@ export default function NeighborhoodMicrogrid3D() {
                   setModalRequesterId(selectedHouse.householdId);
                   setIsRequestModalOpen(true);
                 }}
-                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-between px-4 cursor-pointer shadow-sm"
               >
-                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-                <span>Request Energy Backup</span>
+                <div className="flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                  <span>Request Energy Backup</span>
+                </div>
+                {gamepadState.connected && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono border border-emerald-500/30">
+                    △ Triangle
+                  </span>
+                )}
               </button>
             ) : null
           ) : selectedHouse.powerState === "battery" ? (
