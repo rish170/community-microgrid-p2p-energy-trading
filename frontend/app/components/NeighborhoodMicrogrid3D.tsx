@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect, Suspense, memo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import React, { useState, useRef, useMemo, useEffect, useCallback, Suspense, memo } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
@@ -18,10 +18,36 @@ import {
   Copy,
   Check,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Gamepad2
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
+import { playFocusShiftSound, playSelectSound, playBackSound, initSoundEffects } from "../utils/soundEffects";
+import { playShiftHaptic } from "../utils/gamepadVibration";
+
+// Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
+if (typeof window !== "undefined") {
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    if (
+      typeof args[0] === "string" &&
+      (args[0].includes("THREE.Clock: This module has been deprecated") ||
+       args[0].includes("PCFSoftShadowMap has been deprecated"))
+    ) {
+      return;
+    }
+    origWarn.apply(console, args);
+  };
+}
+
+// Gamepad Status HUD Type
+export interface GamepadHudState {
+  connected: boolean;
+  id: string;
+  activeDirection: "UP" | "DOWN" | "LEFT" | "RIGHT" | null;
+  lastActiveTime: number;
+}
 
 // Types for House Data (aliased to centralized HouseLiveState)
 export type HouseData = HouseLiveState;
@@ -187,7 +213,9 @@ function House3D({
   const isLineCutActive = isLineCut || house.powerState === "line_cut";
   // Consumers without line enter blackout; prosumers run on islanded battery/solar
   const isBlackout = (!isProsumer && house.powerState !== "grid") || house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
-  const isOnBattery = isProsumer && (house.powerState === "battery" || isLineCutActive);
+  const isOnBattery = isProsumer && house.powerState === "battery" && !isLineCutActive;
+  // House goes completely dark on either utility blackout or blown/cut line
+  const shouldBeDark = isBlackout || isLineCutActive;
 
   // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
@@ -215,7 +243,7 @@ function House3D({
     return c;
   }, [scene]);
 
-  // Dynamically update materials when house enters or exits blackout
+  // Dynamically update materials when house enters or exits blackout or cutoff
   useEffect(() => {
     clonedScene.traverse((node) => {
       if ((node as THREE.Mesh).isMesh) {
@@ -224,14 +252,14 @@ function House3D({
         materials.forEach((mat) => {
           if (!mat) return;
           const stdMat = mat as THREE.MeshStandardMaterial;
-          if (isBlackout) {
+          if (shouldBeDark) {
             if (!stdMat.userData.originalColor) {
               stdMat.userData.originalColor = stdMat.color.clone();
               stdMat.userData.originalEmissive = stdMat.emissive ? stdMat.emissive.clone() : new THREE.Color(0, 0, 0);
               stdMat.userData.originalEmissiveIntensity = stdMat.emissiveIntensity || 0;
             }
             if (stdMat.name === "window") {
-              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout
+              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout/line-cut
               if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
               stdMat.emissiveIntensity = 0;
               stdMat.roughness = 0.95;
@@ -251,7 +279,7 @@ function House3D({
         });
       }
     });
-  }, [clonedScene, isBlackout]);
+  }, [clonedScene, shouldBeDark]);
 
   // House scaling & base alignment
   const scale = 0.28;
@@ -299,7 +327,7 @@ function House3D({
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
         <meshStandardMaterial 
-          color={isBlackout ? "#332228" : isLineCutActive ? "#42281D" : "#B0B2BA"} 
+          color={shouldBeDark ? "#332228" : "#B0B2BA"} 
           roughness={0.8} 
         />
       </mesh>
@@ -315,11 +343,11 @@ function House3D({
       {/* PROSUMERS (P1 to P6): Rooftop Solar PV Installation */}
       {/* CONSUMERS (C1 to C6): Standard clean roof */}
       {isProsumer && (
-        <HouseRooftopSolar isSelected={isSelected} isBlackout={isBlackout} />
+        <HouseRooftopSolar isSelected={isSelected} isBlackout={shouldBeDark} />
       )}
 
       {/* Blackout Emergency Beacon */}
-      {isBlackout && (
+      {shouldBeDark && (
         <pointLight 
           position={[0, 0.7, 0]} 
           intensity={0.8} 
@@ -328,7 +356,7 @@ function House3D({
         />
       )}
 
-      {/* Islanded Prosumer Battery Glow */}
+      {/* Islanded Prosumer Battery Glow (only when active and connected) */}
       {isOnBattery && (
         <pointLight 
           position={[0, 1.4, 0]} 
@@ -1239,28 +1267,52 @@ function ActiveTradeBeam({
 }
 
 // =========================================================================
-// CAMERA CONTROLLER WITH FRONT VIEW FOCUS & INTERACTION STABILITY (Requests 6 & 7)
+// FIXED PARCEL COORDINATES & CAMERA CONTROLLER WITH ZERO-LATENCY DIRECT FOCUS
 // =========================================================================
+
+// Fixed parcel coordinates for each of the 12 houses
+const HOUSE_COORDS: Record<string, [number, number, number]> = {
+  C1: [-12.5, 0, -4.5],
+  P1: [-7.5, 0, -4.5],
+  C2: [-2.5, 0, -4.5],
+  P2: [2.5, 0, -4.5],
+  C3: [7.5, 0, -4.5],
+  P3: [12.5, 0, -4.5],
+
+  P4: [-12.5, 0, 4.5],
+  C4: [-7.5, 0, 4.5],
+  P5: [-2.5, 0, 4.5],
+  C5: [2.5, 0, 4.5],
+  P6: [7.5, 0, 4.5],
+  C6: [12.5, 0, 4.5],
+};
 
 function CameraController({ 
   selectedHouse,
-  controlsRef
+  controlsRef,
+  resetViewTrigger = 0
 }: { 
   selectedHouse: HouseData | null; 
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  resetViewTrigger?: number;
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
+  const prevResetTrigger = useRef(resetViewTrigger);
   const transitionProgress = useRef(0);
   const startPos = useRef(new THREE.Vector3(0, 15, 23));
   const startTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+  const directTargetCoord = useRef<{ id: string; x: number; z: number } | null>(null);
 
-  // Stop camera transition immediately when the user rotates, drags, or zooms (Request 6)
+  // Stop camera transition immediately when the user rotates, drags, or zooms
   useEffect(() => {
     const controls = controlsRef.current;
     if (!controls) return;
     const handleInteractionStart = () => {
-      isTransitioning.current = false;
+      // Only abort transition if user actively intervened after camera transition has started moving
+      if (transitionProgress.current > 0.08) {
+        isTransitioning.current = false;
+      }
     };
     controls.addEventListener("start", handleInteractionStart);
     return () => {
@@ -1268,18 +1320,59 @@ function CameraController({
     };
   }, [controlsRef]);
 
+  // Synchronous direct events for 0ms camera transition start (bypasses React render batching delay)
   useEffect(() => {
-    // Only transition camera when user selects a different house or resets view
-    if (selectedHouse?.id !== prevSelectedId.current) {
+    const handleDirectFocus = (e: Event) => {
+      const custom = e as CustomEvent<{ houseId: string }>;
+      const hid = custom.detail?.houseId;
+      if (!hid) return;
+      const coords = HOUSE_COORDS[hid];
+      if (!coords || !controlsRef.current) return;
+      isTransitioning.current = true;
+      transitionProgress.current = 0;
+      prevSelectedId.current = hid;
+      directTargetCoord.current = { id: hid, x: coords[0], z: coords[2] };
+      startPos.current.copy(controlsRef.current.object.position);
+      startTarget.current.copy(controlsRef.current.target);
+    };
+
+    const handleDirectReset = () => {
+      if (!controlsRef.current) return;
+      isTransitioning.current = true;
+      transitionProgress.current = 0;
+      prevSelectedId.current = null;
+      directTargetCoord.current = null;
+      startPos.current.copy(controlsRef.current.object.position);
+      startTarget.current.copy(controlsRef.current.target);
+    };
+
+    window.addEventListener("microgrid_camera_focus_house", handleDirectFocus);
+    window.addEventListener("microgrid_camera_reset_view", handleDirectReset);
+
+    return () => {
+      window.removeEventListener("microgrid_camera_focus_house", handleDirectFocus);
+      window.removeEventListener("microgrid_camera_reset_view", handleDirectReset);
+    };
+  }, [controlsRef]);
+
+  useEffect(() => {
+    // Also transition camera if selectedHouse changes via external React prop
+    if (selectedHouse?.id !== prevSelectedId.current || resetViewTrigger !== prevResetTrigger.current) {
       isTransitioning.current = true;
       transitionProgress.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
+      prevResetTrigger.current = resetViewTrigger;
+      if (selectedHouse) {
+        directTargetCoord.current = { id: selectedHouse.id, x: selectedHouse.x, z: selectedHouse.z };
+      } else {
+        directTargetCoord.current = null;
+      }
       if (controlsRef.current) {
         startPos.current.copy(controlsRef.current.object.position);
         startTarget.current.copy(controlsRef.current.target);
       }
     }
-  }, [selectedHouse, controlsRef]);
+  }, [selectedHouse, resetViewTrigger, controlsRef]);
 
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
@@ -1290,26 +1383,28 @@ function CameraController({
     controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -8.0, 8.0);
 
     if (isTransitioning.current) {
-      // Smooth cubic ease out progression
-      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.2);
+      // Snappy cubic ease out progression
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.8);
       const t = 1 - Math.pow(1 - transitionProgress.current, 3);
 
-      if (selectedHouse) {
+      const targetCoord = directTargetCoord.current || (selectedHouse ? { id: selectedHouse.id, x: selectedHouse.x, z: selectedHouse.z } : null);
+
+      if (targetCoord) {
         // FRONT VIEW: Look at the house from the central road (street side facing the front porch) (Request 7)
-        // North row (z < 0): front porch faces +Z (road), camera placed at z = selectedHouse.z + 5.2
-        // South row (z > 0): front porch faces -Z (road), camera placed at z = selectedHouse.z - 5.2
-        const isSouthRow = selectedHouse.z > 0;
-        const cameraZ = isSouthRow ? selectedHouse.z - 5.2 : selectedHouse.z + 5.2;
-        const destPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
-        const destLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
+        // North row (z < 0): front porch faces +Z (road), camera placed at z = targetCoord.z + 5.2
+        // South row (z > 0): front porch faces -Z (road), camera placed at z = targetCoord.z - 5.2
+        const isSouthRow = targetCoord.z > 0;
+        const cameraZ = isSouthRow ? targetCoord.z - 5.2 : targetCoord.z + 5.2;
+        const destPos = new THREE.Vector3(targetCoord.x, 2.4, cameraZ);
+        const destLook = new THREE.Vector3(targetCoord.x, 1.2, targetCoord.z);
 
         controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
 
         const currentPos = new THREE.Vector3().lerpVectors(startPos.current, destPos, t);
         // For South row houses: if moving from behind (+Z) to front (-Z), swing the camera around the side
         // in an arc so it NEVER passes through the roof zenith or triggers top view gimbal clamping
-        if (isSouthRow && startPos.current.z > selectedHouse.z) {
-          const arcSide = selectedHouse.x >= 0 ? -1 : 1;
+        if (isSouthRow && startPos.current.z > targetCoord.z) {
+          const arcSide = targetCoord.x >= 0 ? -1 : 1;
           const arc = Math.sin(t * Math.PI) * 4.5 * arcSide;
           currentPos.x += arc;
         }
@@ -1332,6 +1427,666 @@ function CameraController({
         }
       }
       controlsRef.current.update();
+    }
+  });
+
+  return null;
+}
+
+// Grid layout mappings for the two parallel rows:
+// North row (z = -4.5): C1, P1, C2, P2, C3, P3 (columns 0 to 5)
+// South row (z = +4.5): P4, C4, P5, C5, P6, C6 (columns 0 to 5)
+const ROW_NORTH = ["C1", "P1", "C2", "P2", "C3", "P3"];
+const ROW_SOUTH = ["P4", "C4", "P5", "C5", "P6", "C6"];
+
+const HOUSE_GRID_MAP: Record<string, { row: "NORTH" | "SOUTH"; col: number }> = {
+  C1: { row: "NORTH", col: 0 },
+  P1: { row: "NORTH", col: 1 },
+  C2: { row: "NORTH", col: 2 },
+  P2: { row: "NORTH", col: 3 },
+  C3: { row: "NORTH", col: 4 },
+  P3: { row: "NORTH", col: 5 },
+
+  P4: { row: "SOUTH", col: 0 },
+  C4: { row: "SOUTH", col: 1 },
+  P5: { row: "SOUTH", col: 2 },
+  C5: { row: "SOUTH", col: 3 },
+  P6: { row: "SOUTH", col: 4 },
+  C6: { row: "SOUTH", col: 5 },
+};
+
+/**
+ * Computes the neighbor house in the given D-pad direction.
+ * In world space:
+ * - The street runs along the X axis (West col 0 at -12.5 to East col 5 at +12.5).
+ * - North row is at Z = -4.5 (C1, P1, C2, P2, C3, P3).
+ * - South row is at Z = +4.5 (P4, C4, P5, C5, P6, C6).
+ *
+ * Using the camera's orientation matrix:
+ * - Horizontal/Diagonal view (|fz| >= |fx|):
+ *   - LEFT / RIGHT moves strictly along the SAME ROW (column step: col - 1 or col + 1).
+ *     If at end of row, stays where it is (no cyclic wrapping).
+ *   - UP / DOWN moves strictly ACROSS THE STREET to opposite paired house.
+ *     If already on the target row, stays where it is.
+ * - Vertical view (|fx| > |fz|):
+ *   - UP / DOWN moves strictly along the SAME ROW.
+ *   - LEFT / RIGHT moves strictly ACROSS THE STREET.
+ */
+function computeCameraRelativeNeighbor(
+  currentId: string,
+  dirName: "UP" | "DOWN" | "LEFT" | "RIGHT",
+  camera: THREE.Camera
+): string {
+  camera.updateMatrixWorld();
+
+  const cur = HOUSE_GRID_MAP[currentId];
+  if (!cur) return "C1";
+
+  // Extract camera horizontal forward and right vectors in world space
+  const m = camera.matrixWorld.elements;
+  const rx = m[0];
+  const rz = m[2];
+  const fx = -m[8];
+  const fz = -m[10];
+
+  // If camera is looking primarily across the street (|fz| >= |fx|): Horizontal / Diagonal views
+  // If camera is looking primarily along the street (|fx| > |fz|): Vertical view
+  const isHorizontalStreet = Math.abs(fz) >= Math.abs(fx);
+
+  if (isHorizontalStreet) {
+    // =========================================================================
+    // HORIZONTAL & DIAGONAL VIEWS (Images 1, 3, 4, 5, top-down)
+    // =========================================================================
+    if (dirName === "LEFT" || dirName === "RIGHT") {
+      // Along the row (X axis)
+      // If rx >= 0, increasing col is to the screen-right. If rx < 0, decreasing col is to the screen-right.
+      const colStep = (dirName === "RIGHT" ? 1 : -1) * (rx >= 0 ? 1 : -1);
+      const nextCol = cur.col + colStep;
+
+      // Strictly clamped to row bounds: no cyclic wrap-around!
+      if (nextCol < 0 || nextCol > 5) {
+        return currentId;
+      }
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
+    } else {
+      // Across the street (Z axis)
+      // If fz > 0: South row (+Z) is in front (FAR / UP on screen), North row is behind (NEAR / DOWN on screen)
+      // If fz < 0: North row (-Z) is in front (FAR / UP on screen), South row is behind (NEAR / DOWN on screen)
+      const farRow: "NORTH" | "SOUTH" = fz > 0 ? "SOUTH" : "NORTH";
+      const nearRow: "NORTH" | "SOUTH" = fz > 0 ? "NORTH" : "SOUTH";
+
+      if (dirName === "UP") {
+        if (cur.row === farRow) {
+          return currentId; // Already in front -> stay
+        }
+        const targetRowList = farRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
+      } else {
+        if (cur.row === nearRow) {
+          return currentId; // Already behind -> stay
+        }
+        const targetRowList = nearRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
+      }
+    }
+  } else {
+    // =========================================================================
+    // VERTICAL STREET VIEW (Image 2: looking lengthwise down the street)
+    // =========================================================================
+    if (dirName === "UP" || dirName === "DOWN") {
+      // Along the street (X axis)
+      // If fx >= 0: increasing col is in front (UP on screen)
+      const colStep = (dirName === "UP" ? 1 : -1) * (fx >= 0 ? 1 : -1);
+      const nextCol = cur.col + colStep;
+
+      if (nextCol < 0 || nextCol > 5) {
+        return currentId;
+      }
+      const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+      return rowList[nextCol];
+    } else {
+      // Across the street (Z axis)
+      // If rz >= 0: South row (+Z) is screen-RIGHT, North row is screen-LEFT
+      const rightRow: "NORTH" | "SOUTH" = rz >= 0 ? "SOUTH" : "NORTH";
+      const leftRow: "NORTH" | "SOUTH" = rz >= 0 ? "NORTH" : "SOUTH";
+
+      if (dirName === "RIGHT") {
+        if (cur.row === rightRow) {
+          return currentId;
+        }
+        const targetRowList = rightRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
+      } else {
+        if (cur.row === leftRow) {
+          return currentId;
+        }
+        const targetRowList = leftRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
+        return targetRowList[cur.col];
+      }
+    }
+  }
+}
+
+// Dedicated 3D Controller Focus Ring with 0ms direct-ref position updates
+function ControllerFocusRing({
+  ringRef,
+  focusedId,
+  selectedId,
+}: {
+  ringRef: React.RefObject<THREE.Group | null>;
+  focusedId: string | null;
+  selectedId: string | null;
+}) {
+  const outerMeshRef = useRef<THREE.Mesh | null>(null);
+
+  useFrame((state) => {
+    if (outerMeshRef.current) {
+      const t = state.clock.getElapsedTime();
+      const s = 1.0 + 0.04 * Math.sin(t * 8);
+      outerMeshRef.current.scale.set(s, s, 1);
+    }
+  });
+
+  useEffect(() => {
+    if (ringRef.current) {
+      const initId = focusedId || "C1";
+      const coords = HOUSE_COORDS[initId];
+      if (coords) {
+        ringRef.current.position.set(coords[0], 0.06, coords[2]);
+      }
+    }
+  }, []);
+
+  const isVisible = Boolean(focusedId && focusedId !== selectedId);
+  const isProsumer = focusedId ? focusedId.startsWith("P") : false;
+
+  return (
+    <group
+      ref={ringRef}
+      visible={isVisible}
+    >
+      {/* Outer Pulse Ring */}
+      <mesh ref={outerMeshRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.75, 2.18, 36]} />
+        <meshBasicMaterial
+          color={isProsumer ? "#F59E0B" : "#EF4444"}
+          transparent
+          opacity={0.88}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {/* Inner Crisp White Accent Ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+        <ringGeometry args={[1.58, 1.72, 36]} />
+        <meshBasicMaterial
+          color="#FFFFFF"
+          transparent
+          opacity={0.7}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+interface GamepadSpatialNavigatorProps {
+  houses: HouseLiveState[];
+  controllerFocusedId: string | null;
+  selectedHouse: HouseLiveState | null;
+  cutLines: number[];
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  focusRingRef: React.RefObject<THREE.Group | null>;
+  onFocusChange: (houseId: string) => void;
+  onSelectHouse: (houseId: string) => void;
+  onResetView: () => void;
+  onResetCameraView: () => void;
+  onToggleCutLine: (house: HouseLiveState) => void;
+  onRequestBackup: (house: HouseLiveState) => void;
+  onToggleAutoAccept?: () => void;
+  onResetMicrogrid?: () => void;
+  onToggleOutage?: () => void;
+  onControllerStateChange: React.Dispatch<React.SetStateAction<GamepadHudState>>;
+}
+
+function GamepadSpatialNavigator({
+  houses,
+  controllerFocusedId,
+  selectedHouse,
+  cutLines,
+  controlsRef,
+  focusRingRef,
+  onFocusChange,
+  onSelectHouse,
+  onResetView,
+  onResetCameraView,
+  onToggleCutLine,
+  onRequestBackup,
+  onToggleAutoAccept,
+  onResetMicrogrid,
+  onToggleOutage,
+  onControllerStateChange,
+}: GamepadSpatialNavigatorProps) {
+  const { camera } = useThree();
+  const prevButtonStates = useRef({
+    UP: false,
+    DOWN: false,
+    LEFT: false,
+    RIGHT: false,
+  });
+  const buttonHoldTimes = useRef({
+    UP: 0,
+    DOWN: 0,
+    LEFT: 0,
+    RIGHT: 0,
+  });
+  const prevActionButtons = useRef({
+    cross: false,
+    circle: false,
+    square: false,
+    triangle: false,
+    l1: false,
+    r1: false,
+    options: false,
+  });
+  const prevStickClicks = useRef({
+    both: false,
+  });
+  const prevDirectionRef = useRef<string | null>(null);
+  const hasControllerRef = useRef(false);
+  const lastShiftTimeRef = useRef(0);
+
+  // Authoritative focus ID ref to eliminate any asynchronous React state race-conditions or backward flashing
+  const focusedIdRef = useRef<string | null>(controllerFocusedId);
+  const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
+  selectedHouseRef.current = selectedHouse;
+
+  // Synchronize external focus changes (e.g. mouse hover or mouse click) into controller focus ref
+  useEffect(() => {
+    if (controllerFocusedId) {
+      focusedIdRef.current = controllerFocusedId;
+      const coords = HOUSE_COORDS[controllerFocusedId];
+      if (coords && focusRingRef.current) {
+        focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+        focusRingRef.current.visible = true;
+      }
+    }
+  }, [controllerFocusedId, focusRingRef]);
+
+  useEffect(() => {
+    initSoundEffects();
+  }, []);
+
+  // Listen to Gamepad connection events
+  useEffect(() => {
+    const handleConnected = (e: GamepadEvent) => {
+      initSoundEffects();
+      hasControllerRef.current = true;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: true,
+        id: e.gamepad.id || "DualShock 4 Wireless Controller",
+        lastActiveTime: Date.now(),
+      }));
+    };
+
+    const handleDisconnected = (e: GamepadEvent) => {
+      hasControllerRef.current = false;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: false,
+        activeDirection: null,
+        lastActiveTime: Date.now(),
+      }));
+    };
+
+    window.addEventListener("gamepadconnected", handleConnected);
+    window.addEventListener("gamepaddisconnected", handleDisconnected);
+
+    return () => {
+      window.removeEventListener("gamepadconnected", handleConnected);
+      window.removeEventListener("gamepaddisconnected", handleDisconnected);
+    };
+  }, [onControllerStateChange]);
+
+  // Gamepad Polling Loop via Three.js useFrame (60/120fps)
+  useFrame((state, delta) => {
+    if (typeof navigator === "undefined" || !navigator.getGamepads) return;
+
+    const gamepads = navigator.getGamepads();
+    let gp: Gamepad | null = null;
+    for (let i = 0; i < gamepads.length; i++) {
+      const g = gamepads[i];
+      if (g && g.connected && (g.buttons.length >= 10 || g.axes.length >= 4)) {
+        gp = g;
+        break;
+      }
+    }
+
+    if (!gp) {
+      if (hasControllerRef.current) {
+        hasControllerRef.current = false;
+        onControllerStateChange((prev) => ({
+          ...prev,
+          connected: false,
+          activeDirection: null,
+        }));
+      }
+      return;
+    }
+
+    if (!hasControllerRef.current) {
+      hasControllerRef.current = true;
+      onControllerStateChange((prev) => ({
+        ...prev,
+        connected: true,
+        id: gp?.id || "DualShock 4 Wireless Controller",
+      }));
+    }
+
+    // =========================================================================
+    // 1. STRICT D-PAD FOCUS NAVIGATION (Instant response, zero lag, no sticks/arrows)
+    // =========================================================================
+    // DualShock 4 W3C Standard D-pad mapping: buttons[12]=Up, [13]=Down, [14]=Left, [15]=Right
+    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
+    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
+    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
+    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
+
+    const now = performance.now();
+    const dirs: ("UP" | "DOWN" | "LEFT" | "RIGHT")[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+    const currentStates = {
+      UP: btnUp,
+      DOWN: btnDown,
+      LEFT: btnLeft,
+      RIGHT: btnRight,
+    };
+
+    let triggeredDir: "UP" | "DOWN" | "LEFT" | "RIGHT" | null = null;
+
+    // Minimum cooldown between ANY shifts (110ms) eliminates switch-bounce and diagonal double-triggering
+    const MIN_SHIFT_COOLDOWN = 110; // ms
+    const REPEAT_INITIAL_DELAY = 260; // ms
+    const REPEAT_INTERVAL = 110; // ms
+
+    const canShift = now - lastShiftTimeRef.current >= MIN_SHIFT_COOLDOWN;
+
+    if (canShift) {
+      // 1. Check for newly pressed button (highest priority)
+      const newlyPressed = dirs.find((d) => currentStates[d] && !prevButtonStates.current[d]);
+      if (newlyPressed) {
+        triggeredDir = newlyPressed;
+        buttonHoldTimes.current[newlyPressed] = now;
+        lastShiftTimeRef.current = now;
+      } else {
+        // 2. Check for held button (auto-repeat)
+        for (const d of dirs) {
+          if (currentStates[d] && prevButtonStates.current[d]) {
+            const holdDuration = now - buttonHoldTimes.current[d];
+            if (holdDuration >= REPEAT_INITIAL_DELAY) {
+              triggeredDir = d;
+              buttonHoldTimes.current[d] = now - (REPEAT_INITIAL_DELAY - REPEAT_INTERVAL);
+              lastShiftTimeRef.current = now;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Reset hold timers for released buttons
+    for (const d of dirs) {
+      if (!currentStates[d] && prevButtonStates.current[d]) {
+        buttonHoldTimes.current[d] = 0;
+      }
+    }
+
+    prevButtonStates.current = currentStates;
+
+    if (triggeredDir) {
+      if (!focusedIdRef.current) {
+        // Any initial D-pad press places focus ring on C1 (Stage 1 rule) and plays sound
+        focusedIdRef.current = "C1";
+        const coords = HOUSE_COORDS["C1"];
+        if (coords && focusRingRef.current) {
+          focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+          focusRingRef.current.visible = true;
+        }
+        onFocusChange("C1");
+        playFocusShiftSound();
+        playShiftHaptic();
+      } else {
+        const current = focusedIdRef.current;
+        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
+
+        if (nextId && nextId !== current) {
+          focusedIdRef.current = nextId;
+          const coords = HOUSE_COORDS[nextId];
+          // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
+          if (coords && focusRingRef.current) {
+            focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+            focusRingRef.current.visible = true;
+          }
+          onFocusChange(nextId);
+          playFocusShiftSound();
+          playShiftHaptic();
+        }
+      }
+
+      if (prevDirectionRef.current !== triggeredDir) {
+        prevDirectionRef.current = triggeredDir;
+        onControllerStateChange((prev) => ({
+          ...prev,
+          connected: true,
+          id: gp?.id || "DualShock 4 Wireless Controller",
+          activeDirection: triggeredDir,
+          lastActiveTime: Date.now(),
+        }));
+      }
+    } else {
+      if (prevDirectionRef.current !== null && !btnUp && !btnDown && !btnLeft && !btnRight) {
+        prevDirectionRef.current = null;
+        onControllerStateChange((prev) => ({ ...prev, activeDirection: null }));
+      }
+    }
+
+    // =========================================================================
+    // 2. ACTION BUTTONS: 
+    // - X (btn 0): Open house / toggle cut line
+    // - Circle (btn 1): Return / reset view
+    // - Square (btn 2): Toggle auto-accept requests
+    // - Triangle (btn 3): Request energy backup
+    // - L1 (btn 4): Reset microgrid to baseline (settings button)
+    // - R1 (btn 5): Toggle simulate outage
+    // - Options (btn 9): Toggle settings modal
+    // =========================================================================
+    const btnCross = Boolean(gp.buttons[0]?.pressed || (gp.buttons[0]?.value ?? 0) > 0.5);
+    const btnCircle = Boolean(gp.buttons[1]?.pressed || (gp.buttons[1]?.value ?? 0) > 0.5);
+    const btnSquare = Boolean(gp.buttons[2]?.pressed || (gp.buttons[2]?.value ?? 0) > 0.5);
+    const btnTriangle = Boolean(gp.buttons[3]?.pressed || (gp.buttons[3]?.value ?? 0) > 0.5);
+    const btnL1 = Boolean(gp.buttons[4]?.pressed || (gp.buttons[4]?.value ?? 0) > 0.5);
+    const btnR1 = Boolean(gp.buttons[5]?.pressed || (gp.buttons[5]?.value ?? 0) > 0.5);
+    const btnOptions = Boolean(gp.buttons[9]?.pressed || (gp.buttons[9]?.value ?? 0) > 0.5);
+
+    // 2A. X Button (Cross):
+    // - If no house is open: opens the currently focused house (or C1)
+    // - If a house is open: toggles cut line (cuts if active, restores if cut)
+    if (btnCross && !prevActionButtons.current.cross) {
+      const currentSelected = selectedHouseRef.current;
+      if (!currentSelected) {
+        const targetId = focusedIdRef.current || "C1";
+        focusedIdRef.current = targetId;
+        const coords = HOUSE_COORDS[targetId];
+        if (coords && focusRingRef.current) {
+          focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+          focusRingRef.current.visible = true;
+        }
+        // Direct synchronous event starts zoom-in on this exact frame (0ms delay, matches audio start)
+        window.dispatchEvent(new CustomEvent("microgrid_camera_focus_house", { detail: { houseId: targetId } }));
+        playSelectSound();
+        onFocusChange(targetId);
+        onSelectHouse(targetId);
+      } else {
+        onToggleCutLine(currentSelected);
+      }
+    }
+
+    // 2B. Circle Button: Goes back to the complete simulation view (reset)
+    if (btnCircle && !prevActionButtons.current.circle) {
+      const wasSelected = Boolean(selectedHouseRef.current);
+      if (wasSelected) {
+        playBackSound();
+      }
+      window.dispatchEvent(new CustomEvent("microgrid_camera_reset_view"));
+      onResetView();
+    }
+
+    // 2C. Square Button: Toggles Auto-Accept requests
+    if (btnSquare && !prevActionButtons.current.square) {
+      onToggleAutoAccept?.();
+    }
+
+    // 2D. Triangle Button: Triggers "Request Energy Backup" button when house is cut off
+    if (btnTriangle && !prevActionButtons.current.triangle) {
+      const currentSelected = selectedHouseRef.current;
+      if (currentSelected) {
+        onRequestBackup(currentSelected);
+      }
+    }
+
+    // 2E. L1 Button: Resets microgrid to baseline (the button in settings)
+    if (btnL1 && !prevActionButtons.current.l1) {
+      onResetMicrogrid?.();
+    }
+
+    // 2F. R1 Button: Toggles simulate outage
+    if (btnR1 && !prevActionButtons.current.r1) {
+      onToggleOutage?.();
+    }
+
+    // 2G. Options Button (btn 9): Toggles settings modal from header
+    if (btnOptions && !prevActionButtons.current.options) {
+      window.dispatchEvent(new CustomEvent("microgrid_toggle_settings"));
+    }
+
+    prevActionButtons.current = {
+      cross: btnCross,
+      circle: btnCircle,
+      square: btnSquare,
+      triangle: btnTriangle,
+      l1: btnL1,
+      r1: btnR1,
+      options: btnOptions,
+    };
+
+    // =========================================================================
+    // 3. JOYSTICK & TRIGGER NAVIGATION
+    // - Left Stick: Pan/Move (right click drag)
+    // - Right Stick: Orbit/Rotate (left click drag)
+    // - L2 / R2: Analog Zoom In (R2) / Zoom Out (L2)
+    // - L3 + R3 pressed together: Reset camera view to overhead look
+    // =========================================================================
+    const controls = controlsRef.current;
+    if (controls) {
+      // 3A. L3 + R3 pressed together: Reset view to overhead look (view only, not grid)
+      const btnL3 = Boolean(gp.buttons[10]?.pressed || (gp.buttons[10]?.value ?? 0) > 0.5);
+      const btnR3 = Boolean(gp.buttons[11]?.pressed || (gp.buttons[11]?.value ?? 0) > 0.5);
+      const bothSticksClicked = btnL3 && btnR3;
+
+      if (bothSticksClicked && !prevStickClicks.current.both) {
+        onResetCameraView();
+      }
+      prevStickClicks.current.both = bothSticksClicked;
+
+      // 3B. Analog Triggers: R2 (btn 7) Zoom In, L2 (btn 6) Zoom Out
+      const l2Val = gp.buttons[6]?.value ?? (gp.buttons[6]?.pressed ? 1.0 : 0.0);
+      const r2Val = gp.buttons[7]?.value ?? (gp.buttons[7]?.pressed ? 1.0 : 0.0);
+
+      if (l2Val > 0.05 || r2Val > 0.05) {
+        controls.dispatchEvent({ type: "start", target: controls });
+        const zoomSpeed = 22.0 * Math.min(delta, 0.1);
+        const zoomDelta = (r2Val - l2Val) * zoomSpeed; // R2 > 0 -> zoom in (closer), L2 > 0 -> zoom out (further)
+
+        const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+        const curDist = offset.length();
+        const nextDist = THREE.MathUtils.clamp(curDist - zoomDelta, 6.0, 38.0);
+        if (curDist > 0.001) {
+          offset.multiplyScalar(nextDist / curDist);
+          camera.position.copy(controls.target).add(offset);
+          controls.update();
+        }
+      }
+
+      const DEADZONE = 0.14;
+
+      // 3C. Left Stick (Axes 0 & 1): Scene movement / Pan (equivalent to right mouse drag)
+      const leftX = gp.axes[0] ?? 0;
+      const leftY = gp.axes[1] ?? 0;
+      const leftDist = Math.hypot(leftX, leftY);
+
+      if (leftDist > DEADZONE) {
+        controls.dispatchEvent({ type: "start", target: controls });
+
+        // Smooth non-linear curve so slight tilts provide delicate adjustments
+        const linearFactor = (leftDist - DEADZONE) / (1 - DEADZONE);
+        const factor = Math.pow(linearFactor, 1.4);
+        const normX = (leftX / leftDist) * factor;
+        const normY = (leftY / leftDist) * factor;
+
+        // Lowered pan sensitivity for smooth, controllable scene movement
+        const panSpeed = 8.5 * Math.min(delta, 0.1);
+        const rightVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+        const upVector = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+
+        const panOffset = new THREE.Vector3();
+        panOffset.addScaledVector(rightVector, normX * panSpeed);
+        panOffset.addScaledVector(upVector, -normY * panSpeed);
+
+        controls.target.add(panOffset);
+        camera.position.add(panOffset);
+
+        controls.target.x = THREE.MathUtils.clamp(controls.target.x, -22.0, 22.0);
+        controls.target.y = THREE.MathUtils.clamp(controls.target.y, 0.0, 4.0);
+        controls.target.z = THREE.MathUtils.clamp(controls.target.z, -10.0, 10.0);
+
+        controls.update();
+      }
+
+      // 3D. Right Stick (Axes 2 & 3): Rotate view / Orbit (equivalent to left mouse drag)
+      let rightX = gp.axes[2] ?? 0;
+      let rightY = gp.axes[3] ?? 0;
+      if (Math.abs(rightX) < 0.01 && Math.abs(rightY) < 0.01 && gp.axes.length > 5) {
+        if (Math.abs(gp.axes[4] ?? 0) > 0.1 || Math.abs(gp.axes[5] ?? 0) > 0.1) {
+          rightX = gp.axes[4] ?? 0;
+          rightY = gp.axes[5] ?? 0;
+        }
+      }
+
+      const rightDist = Math.hypot(rightX, rightY);
+      if (rightDist > DEADZONE) {
+        controls.dispatchEvent({ type: "start", target: controls });
+
+        const factor = (rightDist - DEADZONE) / (1 - DEADZONE);
+        const normX = (rightX / rightDist) * factor;
+        const normY = (rightY / rightDist) * factor;
+
+        const rotSpeed = 2.4 * Math.min(delta, 0.1);
+        const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+
+        spherical.theta -= normX * rotSpeed;
+        spherical.phi += normY * rotSpeed;
+        const minPhi = controls.minPolarAngle || (Math.PI / 8);
+        const maxPhi = controls.maxPolarAngle || (Math.PI / 2.18);
+        spherical.phi = THREE.MathUtils.clamp(spherical.phi, minPhi, maxPhi);
+        spherical.makeSafe();
+
+        offset.setFromSpherical(spherical);
+        camera.position.copy(controls.target).add(offset);
+        camera.lookAt(controls.target);
+
+        controls.update();
+      }
     }
   });
 
@@ -1362,10 +2117,28 @@ export default function NeighborhoodMicrogrid3D() {
   } = useMicrogridData();
   const [selectedHouseIds, setSelectedHouseIds] = useState<string[]>([]);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
+  const [controllerFocusedId, setControllerFocusedId] = useState<string | null>(null);
+  const [cameraResetTrigger, setCameraResetTrigger] = useState(0);
+
+  const handleResetCameraView = useCallback(() => {
+    // Only resets camera view to overhead look, does not touch the grid or cut lines
+    setSelectedHouseIds([]);
+    setIsRequestModalOpen(false);
+    setActiveTrade(null);
+    setTradeSuccess(false);
+    setCameraResetTrigger((c) => c + 1);
+  }, []);
+  const [gamepadState, setGamepadState] = useState<GamepadHudState>({
+    connected: false,
+    id: "",
+    activeDirection: null,
+    lastActiveTime: 0,
+  });
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const focusRingRef = useRef<THREE.Group | null>(null);
 
   // Energy Request Modal state (M4)
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -1652,13 +2425,66 @@ export default function NeighborhoodMicrogrid3D() {
       
       {/* 3D WebGL Canvas */}
       <Canvas
-        shadows
+        shadows="percentage"
         camera={{ position: [0, 15, 23], fov: 42 }}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
       >
         {/* Soft daylight sky color and atmospheric fog that seamlessly bounds the terrain */}
         <color attach="background" args={["#DCEAF6"]} />
         <fog attach="fog" args={["#DCEAF6", 30, 58]} />
+
+        {/* Gamepad Spatial Controller Navigator (DualShock PS4) */}
+        <GamepadSpatialNavigator
+          houses={houses}
+          controllerFocusedId={controllerFocusedId}
+          selectedHouse={selectedHouse}
+          cutLines={cutLines}
+          controlsRef={controlsRef}
+          focusRingRef={focusRingRef}
+          onFocusChange={(newId) => setControllerFocusedId(newId)}
+          onSelectHouse={(houseId) => handleHouseSelect(houseId, false)}
+          onResetView={() => {
+            setSelectedHouseIds([]);
+            setIsRequestModalOpen(false);
+            setActiveTrade(null);
+            setTradeSuccess(false);
+            setSettledReceipt(null);
+          }}
+          onResetCameraView={handleResetCameraView}
+          onToggleCutLine={(house) => {
+            const hid = house.householdId;
+            const isCut = cutLines.includes(hid) || house.powerState === "line_cut";
+            if (isCut) {
+              restoreLinesAction([hid]);
+            } else {
+              cutLinesAction([hid]);
+            }
+          }}
+          onRequestBackup={(house) => {
+            const isCutOrOutage = house.powerState === "line_cut" || house.powerState === "blackout" || house.isOutage || cutLines.includes(house.householdId);
+            if (house.type === "consumer" && isCutOrOutage) {
+              setModalRequesterId(house.householdId);
+              setIsRequestModalOpen(true);
+            }
+          }}
+          onToggleAutoAccept={() => toggleAutoAcceptAction()}
+          onResetMicrogrid={() => resetMicrogridAction()}
+          onToggleOutage={() => {
+            if (isSocietyOutage) {
+              restoreSocietyGrid();
+            } else {
+              triggerSocietyOutage();
+            }
+          }}
+          onControllerStateChange={setGamepadState}
+        />
+
+        {/* Dedicated 0ms instant 3D Controller Focus Ring */}
+        <ControllerFocusRing 
+          ringRef={focusRingRef} 
+          focusedId={controllerFocusedId} 
+          selectedId={selectedHouse?.id || null} 
+        />
 
         {/* Realistic Sun & Ambient Lighting (Dims dynamically during society outage) */}
         <ambientLight intensity={isSocietyOutage ? 0.7 : 1.6} color={isSocietyOutage ? "#cbd5e1" : "#ffffff"} />
@@ -1683,7 +2509,11 @@ export default function NeighborhoodMicrogrid3D() {
         />
 
         {/* Camera smooth transition controller with boundary clamping */}
-        <CameraController selectedHouse={selectedHouse} controlsRef={controlsRef} />
+        <CameraController 
+          selectedHouse={selectedHouse} 
+          controlsRef={controlsRef} 
+          resetViewTrigger={cameraResetTrigger} 
+        />
 
         {/* 1. Minecraft Finite Voxel Terrain Foundation & Perimeter Hills */}
         <MinecraftVoxelTerrain />
@@ -1707,8 +2537,17 @@ export default function NeighborhoodMicrogrid3D() {
               isHovered={hoveredHouseId === house.id}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
               showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
-              onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
-              onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
+              onSelect={(isMulti) => {
+                setControllerFocusedId(house.id);
+                window.dispatchEvent(new CustomEvent("microgrid_camera_focus_house", { detail: { houseId: house.id } }));
+                handleHouseSelect(house.id, isMulti);
+              }}
+              onHover={(hovered) => {
+                setHoveredHouseId(hovered ? house.id : null);
+                if (hovered) {
+                  setControllerFocusedId(house.id);
+                }
+              }}
             />
           ))}
         </Suspense>
@@ -1759,9 +2598,9 @@ export default function NeighborhoodMicrogrid3D() {
           </div>
         </div>
 
-        {/* Action Controls (Cleaned: Settings moved to Header Navbar - Request 4) */}
+        {/* Action Controls */}
         <div className="pointer-events-auto flex items-center gap-2">
-          {selectedHouseIds.length > 0 && (
+          {selectedHouseIds.length > 0 ? (
             <button
               onClick={() => {
                 setSelectedHouseIds([]);
@@ -1772,6 +2611,20 @@ export default function NeighborhoodMicrogrid3D() {
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Reset View ({selectedHouseIds.length})</span>
+              {gamepadState.connected && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 text-[10px] font-bold border border-rose-500/20">
+                  ○ Circle
+                </span>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleResetCameraView}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-98"
+              title="Reset camera angle to overhead look"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
+              <span>Reset View</span>
             </button>
           )}
         </div>
@@ -1883,18 +2736,24 @@ export default function NeighborhoodMicrogrid3D() {
             {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? (
               <button
                 onClick={() => restoreLinesAction([selectedHouse.householdId])}
-                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
-                title="Reconnect utility line"
+                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                title="Reconnect utility line (or press X on controller)"
               >
                 <span>Reconnect</span>
+                {gamepadState.connected && (
+                  <span className="px-1 rounded bg-[#16A34A]/20 text-[#16A34A] font-mono text-[9px]">✕</span>
+                )}
               </button>
             ) : (
               <button
                 onClick={() => cutLinesAction([selectedHouse.householdId])}
-                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
-                title="Simulate blown line / isolate house"
+                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                title="Simulate blown line / isolate house (or press X on controller)"
               >
                 <span>Cut Line</span>
+                {gamepadState.connected && (
+                  <span className="px-1 rounded bg-[#DC2626]/20 text-[#DC2626] font-mono text-[9px]">✕</span>
+                )}
               </button>
             )}
           </div>
@@ -1993,10 +2852,17 @@ export default function NeighborhoodMicrogrid3D() {
                   setModalRequesterId(selectedHouse.householdId);
                   setIsRequestModalOpen(true);
                 }}
-                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-between px-4 cursor-pointer shadow-sm"
               >
-                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-                <span>Request Energy Backup</span>
+                <div className="flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                  <span>Request Energy Backup</span>
+                </div>
+                {gamepadState.connected && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono border border-emerald-500/30">
+                    △ Triangle
+                  </span>
+                )}
               </button>
             ) : null
           ) : selectedHouse.powerState === "battery" ? (

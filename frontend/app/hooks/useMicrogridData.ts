@@ -108,6 +108,7 @@ function useMicrogridDataHookInternal() {
   const channelRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>["channel"]> | null>(null);
   const isSocietyOutageRef = useRef<boolean>(isSocietyOutage);
   const cutLinesRef = useRef<number[]>(cutLines);
+  const localCutLinesRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     isSocietyOutageRef.current = isSocietyOutage;
@@ -171,12 +172,15 @@ function useMicrogridDataHookInternal() {
           }
           if (Array.isArray(json.cutLines)) {
             const parsedCutLines = json.cutLines.map(Number);
-            setCutLines(parsedCutLines);
-            cutLinesRef.current = parsedCutLines;
+            const merged = Array.from(new Set([...parsedCutLines, ...Array.from(localCutLinesRef.current)]));
+            setCutLines(merged);
+            cutLinesRef.current = merged;
           }
           if (Array.isArray(json.houses) && json.houses.length > 0) {
             const isOutage = typeof json.isSocietyOutage === "boolean" ? json.isSocietyOutage : isSocietyOutageRef.current;
-            const currentCutLines = Array.isArray(json.cutLines) ? json.cutLines.map(Number) : cutLinesRef.current;
+            const currentCutLines = Array.isArray(json.cutLines) 
+              ? Array.from(new Set([...json.cutLines.map(Number), ...Array.from(localCutLinesRef.current)]))
+              : cutLinesRef.current;
 
             setHouses((prev) =>
               prev.map((h) => {
@@ -192,7 +196,7 @@ function useMicrogridDataHookInternal() {
                   pState = h.type === "prosumer"
                     ? (remoteBattery > 0 ? "battery" : "blackout")
                     : "blackout";
-                } else if (currentCutLines.includes(h.householdId)) {
+                } else if (currentCutLines.includes(h.householdId) || localCutLinesRef.current.has(h.householdId)) {
                   pState = "line_cut";
                 } else if (pState === "blackout" || pState === "line_cut") {
                   pState = "grid";
@@ -242,8 +246,9 @@ function useMicrogridDataHookInternal() {
 
       if (cutEvents) {
         const cutIds = cutEvents.map((e) => Number(e.household_id)).filter(Boolean);
-        setCutLines(cutIds);
-        cutLinesRef.current = cutIds;
+        const merged = Array.from(new Set([...cutIds, ...Array.from(localCutLinesRef.current)]));
+        setCutLines(merged);
+        cutLinesRef.current = merged;
       }
 
       // 3. Fetch persistent house status from Supabase
@@ -310,12 +315,12 @@ function useMicrogridDataHookInternal() {
           const isOutageActive = isSocietyOutageRef.current;
           const activeCutLines = cutLinesRef.current;
 
-          // Deterministic state computation prevents loop flipping and glitches
+          const isHouseCut = activeCutLines.includes(h.householdId) || localCutLinesRef.current.has(h.householdId);
           if (isOutageActive) {
             powerState = h.type === "prosumer"
               ? (h.batteryKwh > 0 ? "battery" : "blackout")
               : "blackout";
-          } else if (activeCutLines.includes(h.householdId)) {
+          } else if (isHouseCut) {
             powerState = "line_cut";
           } else {
             // Normal grid operation: cannot be blackout unless line cut or outage is active
@@ -421,6 +426,7 @@ function useMicrogridDataHookInternal() {
   const resetMicrogridAction = useCallback(async () => {
     setIsSocietyOutage(false);
     isSocietyOutageRef.current = false;
+    localCutLinesRef.current.clear();
     setCutLines([]);
     cutLinesRef.current = [];
     setEnergyRequests([]);
@@ -456,6 +462,7 @@ function useMicrogridDataHookInternal() {
   const cutLinesAction = useCallback(async (householdIds: number[]) => {
     if (!householdIds || householdIds.length === 0) return;
     const numIds = householdIds.map(Number);
+    numIds.forEach((id) => localCutLinesRef.current.add(id));
     const updated = Array.from(new Set([...cutLinesRef.current, ...numIds]));
     cutLinesRef.current = updated;
     setCutLines(updated);
@@ -502,6 +509,7 @@ function useMicrogridDataHookInternal() {
   const restoreLinesAction = useCallback(async (householdIds: number[]) => {
     if (!householdIds || householdIds.length === 0) return;
     const numIds = householdIds.map(Number);
+    numIds.forEach((id) => localCutLinesRef.current.delete(id));
     const updated = cutLinesRef.current.filter((id) => !numIds.includes(id));
     cutLinesRef.current = updated;
     setCutLines(updated);
@@ -867,6 +875,11 @@ function useMicrogridDataHookInternal() {
                     powerState = "blackout";
                   }
                 }
+              }
+
+              const isHouseCut = cutLinesRef.current.includes(h.householdId) || localCutLinesRef.current.has(h.householdId);
+              if (isHouseCut) {
+                powerState = "line_cut";
               }
 
               return {
