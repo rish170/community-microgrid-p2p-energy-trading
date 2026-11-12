@@ -44,6 +44,16 @@ export function getActiveGamepad(): Gamepad | null {
 }
 
 let isRumblingActive = false;
+let lastShiftHapticTime = 0;
+let cachedSettings: VibrationSettings = { strongMagnitude: 0.75, weakMagnitude: 0.85 };
+
+if (typeof window !== "undefined") {
+  cachedSettings = loadVibrationSettings();
+  window.addEventListener("microgrid_vibration_settings_updated", (e: Event) => {
+    const custom = e as CustomEvent<VibrationSettings>;
+    if (custom.detail) cachedSettings = custom.detail;
+  });
+}
 
 export async function triggerRumble(
   durationMs: number,
@@ -57,9 +67,8 @@ export async function triggerRumble(
   const gp = getActiveGamepad();
   if (!gp) return false;
 
-  const currentSettings = loadVibrationSettings();
-  const s = strong !== undefined ? strong : currentSettings.strongMagnitude;
-  const w = weak !== undefined ? weak : currentSettings.weakMagnitude;
+  const s = strong !== undefined ? strong : cachedSettings.strongMagnitude;
+  const w = weak !== undefined ? weak : cachedSettings.weakMagnitude;
 
   const actuator = (gp as unknown as { vibrationActuator?: { playEffect: (type: string, options: object) => Promise<string> } }).vibrationActuator;
   if (!actuator || typeof actuator.playEffect !== "function") return false;
@@ -140,8 +149,17 @@ export async function playVibrationPattern(patternId: string, strong?: number, w
   }
 }
 
-// Action haptic feedback (disabled during rapid D-pad navigation to maintain 0ms Bluetooth input latency)
+// Tactile click haptic on D-pad navigation with throttle guard to preserve 0ms Bluetooth input latency
 export function playShiftHaptic() {
-  // Kept lightweight or no-op so Bluetooth HID report queue never stalls
+  const now = performance.now();
+  // Minimum 90ms spacing prevents Bluetooth packet congestion
+  if (now - lastShiftHapticTime < 90) return;
+  if (isRumblingActive) return;
+  lastShiftHapticTime = now;
+
+  // Ultra-crisp 40ms tactile pulse
+  const s = cachedSettings.strongMagnitude * 0.4;
+  const w = cachedSettings.weakMagnitude * 0.85;
+  triggerRumble(40, s, w).catch(() => {});
 }
 

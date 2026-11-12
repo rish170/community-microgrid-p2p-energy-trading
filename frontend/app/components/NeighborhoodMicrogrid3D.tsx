@@ -1731,6 +1731,7 @@ function GamepadSpatialNavigator({
           focusRingRef.current.visible = true;
         }
         onFocusChange(nextId);
+        playShiftHaptic();
       }
 
       if (prevDirectionRef.current !== triggeredDir) {
