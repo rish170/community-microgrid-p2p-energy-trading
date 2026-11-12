@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import "./EnergyToken.sol";
-
+/// @title Community Microgrid P2P Energy Trading Settlement (Option B - Native ETH)
+/// @notice Settles energy trades directly in test ETH between consumer and prosumer without token dependencies
 contract Trading {
-    EnergyToken public energyToken;
-
-    uint256 public constant PRICE_PER_KWH = 1 ether;
-
     struct Trade {
         address buyer;
         address seller;
@@ -22,37 +18,31 @@ contract Trading {
         address indexed buyer,
         address indexed seller,
         uint256 kWh,
-        uint256 totalPrice
+        uint256 totalPrice,
+        uint256 timestamp
     );
 
-    constructor(address _energyToken) {
-        energyToken = EnergyToken(_energyToken);
-    }
-
-    function buyEnergy(address seller, uint256 kWh) external payable {
+    /// @notice Direct ETH settlement between consumer and prosumer
+    /// @param seller The address of the prosumer selling solar/battery surplus
+    /// @param kWh The amount of energy being purchased in kilowatt-hours
+    function buyEnergy(address payable seller, uint256 kWh) external payable {
+        require(seller != address(0), "Invalid seller address");
         require(kWh > 0, "kWh must be greater than zero");
-        require(msg.value == kWh * PRICE_PER_KWH, "Incorrect payment");
-        require(
-            energyToken.balanceOf(seller) >= kWh * 10 ** energyToken.decimals(),
-            "Seller has insufficient energy"
-        );
+        require(msg.value > 0, "Payment must be greater than zero");
 
-        energyToken.transferFrom(seller, address(this), kWh * 10 ** energyToken.decimals());
-        energyToken.transfer(msg.sender, kWh * 10 ** energyToken.decimals());
+        // Forward payment directly to seller
+        (bool sent, ) = seller.call{value: msg.value}("");
+        require(sent, "Failed to send Ether to seller");
 
-        payable(seller).transfer(msg.value);
+        trades.push(Trade(
+            msg.sender,
+            seller,
+            kWh,
+            msg.value,
+            block.timestamp
+        ));
 
-        trades.push(
-            Trade(
-                msg.sender,
-                seller,
-                kWh,
-                msg.value,
-                block.timestamp
-            )
-        );
-
-        emit TradeExecuted(msg.sender, seller, kWh, msg.value);
+        emit TradeExecuted(msg.sender, seller, kWh, msg.value, block.timestamp);
     }
 
     function getTradeCount() external view returns (uint256) {

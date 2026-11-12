@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect, Suspense } from "react";
+import React, { useState, useRef, useMemo, useEffect, Suspense, memo } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html, useGLTF } from "@react-three/drei";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import { 
   Zap, 
@@ -11,44 +12,37 @@ import {
   AlertTriangle,
   X,
   BatteryCharging,
-  SunMedium
+  SunMedium,
+  Activity,
+  Radio,
+  Copy,
+  Check
 } from "lucide-react";
+import { HOUSES_CONFIG } from "../config/houses";
+import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
 
-// Types for House Data
-export interface HouseData {
-  id: string;
-  name: string;
-  type: "prosumer" | "consumer";
-  x: number;
-  z: number;
-  rotationY: number;
-  solarKwh: number;
-  usageKwh: number;
-  surplusKwh: number;
-  walletAddress: string;
-  isOutage?: boolean;
-}
+// Types for House Data (aliased to centralized HouseLiveState)
+export type HouseData = HouseLiveState;
 
-// Exactly 12 Houses: 6 Prosumer (P1-P6 with Solar) + 6 Consumer (C1-C6 without Solar)
-// Front Row (North): P1, C1, P2, C2, P3, C3 (facing South towards road: rotationY = 0)
-// Back Row (South): C4, P4, C5, P5, C6, P6 (facing North towards road: rotationY = Math.PI)
-export const NEIGHBORHOOD_HOUSES: HouseData[] = [
-  // Front / North Row (z = -4.5, facing South towards road: rotationY = 0)
-  { id: "P1", name: "Residence P1", type: "prosumer", x: -12.5, z: -4.5, rotationY: 0, solarKwh: 3.2, usageKwh: 0.8, surplusKwh: 2.4, walletAddress: "0x11A2...8F01" },
-  { id: "C1", name: "Residence C1", type: "consumer", x: -7.5,  z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 1.2, surplusKwh: -1.2, walletAddress: "0x22B3...4E12", isOutage: false },
-  { id: "P2", name: "Residence P2", type: "prosumer", x: -2.5,  z: -4.5, rotationY: 0, solarKwh: 2.8, usageKwh: 1.0, surplusKwh: 1.8, walletAddress: "0x33C4...9D23" },
-  { id: "C2", name: "Residence C2", type: "consumer", x: 2.5,   z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 2.0, surplusKwh: -2.0, walletAddress: "0x55E6...1B45" },
-  { id: "P3", name: "Residence P3 (Node Alpha)", type: "prosumer", x: 7.5, z: -4.5, rotationY: 0, solarKwh: 4.2, usageKwh: 1.1, surplusKwh: 3.1, walletAddress: "0x3C44...93BC" },
-  { id: "C3", name: "Residence C3", type: "consumer", x: 12.5,  z: -4.5, rotationY: 0, solarKwh: 0.0, usageKwh: 1.5, surplusKwh: -1.5, walletAddress: "0x66F7...7A56" },
-
-  // Back / South Row (z = 4.5, facing North towards road: rotationY = Math.PI)
-  { id: "C4", name: "Residence C4", type: "consumer", x: -12.5, z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.8, surplusKwh: -1.8, walletAddress: "0x77A8...3C67" },
-  { id: "P4", name: "Residence P4", type: "prosumer", x: -7.5,  z: 4.5, rotationY: Math.PI, solarKwh: 3.6, usageKwh: 0.9, surplusKwh: 2.7, walletAddress: "0x88B9...2E78" },
-  { id: "C5", name: "Residence C5", type: "consumer", x: -2.5,  z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.0, surplusKwh: -1.0, walletAddress: "0x99C0...9F89" },
-  { id: "P5", name: "Residence P5", type: "prosumer", x: 2.5,   z: 4.5, rotationY: Math.PI, solarKwh: 3.8, usageKwh: 0.8, surplusKwh: 3.0, walletAddress: "0xBBD2...6C01" },
-  { id: "C6", name: "Residence C6 (Node Beta)", type: "consumer", x: 7.5, z: 4.5, rotationY: Math.PI, solarKwh: 0.0, usageKwh: 1.5, surplusKwh: -1.5, walletAddress: "0x71C7...976F", isOutage: true },
-  { id: "P6", name: "Residence P6", type: "prosumer", x: 12.5,  z: 4.5, rotationY: Math.PI, solarKwh: 3.2, usageKwh: 0.7, surplusKwh: 2.5, walletAddress: "0xCCE3...8D12" },
-];
+// Legacy export for backwards compatibility
+export const NEIGHBORHOOD_HOUSES: HouseData[] = HOUSES_CONFIG.map((cfg) => {
+  const isSolar = cfg.type === "prosumer";
+  const solarKwh = isSolar ? (cfg.id === "P3" ? 4.2 : 3.2) : 0.0;
+  const usageKwh = isSolar ? 1.0 : (cfg.id === "C6" ? 1.5 : 1.2);
+  const netKwh = Number((usageKwh - solarKwh).toFixed(2));
+  return {
+    ...cfg,
+    solarKwh,
+    usageKwh,
+    netKwh,
+    surplusKwh: -netKwh,
+    walletAddress: `0x${cfg.householdId.toString(16).padStart(4, "0")}...${cfg.householdId * 1111}`,
+    powerState: "grid",
+    batteryKwh: isSolar ? (cfg.initialBatteryKwh ?? 4.5) : 0,
+    batteryCapacityKwh: isSolar ? (cfg.batteryCapacityKwh ?? 6.0) : 0,
+    isOutage: false,
+  };
+});
 
 // Preload house.glb
 useGLTF.preload("/models/house.glb");
@@ -62,34 +56,24 @@ function SolarPanelModule({ width = 0.45, length = 0.65 }: { width?: number; len
         <boxGeometry args={[width + 0.03, 0.016, length + 0.03]} />
         <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.3} />
       </mesh>
-      {/* Dark Photovoltaic Silicon Cell */}
-      <mesh position={[0, 0.018, 0]} castShadow>
+      {/* Photovoltaic Silicon Cell */}
+      <mesh position={[0, 0.018, 0]} castShadow receiveShadow>
         <boxGeometry args={[width, 0.012, length]} />
         <meshStandardMaterial 
-          color="#1e293b" 
-          roughness={0.2} 
-          metalness={0.85}
-          emissive="#1e3a5f"
+          color="#0F172A" 
+          roughness={0.25} 
+          metalness={0.8}
+          emissive="#1E3A8A"
           emissiveIntensity={0.2}
         />
       </mesh>
-      {/* Anti-reflective Glass Finish Layer */}
-      <mesh position={[0, 0.026, 0]}>
-        <planeGeometry args={[width * 0.94, length * 0.94]} />
-        <meshStandardMaterial 
-          color="#38bdf8" 
-          roughness={0.1} 
-          metalness={0.9}
-          emissive="#0284c7"
-          emissiveIntensity={0.25}
-        />
-      </mesh>
+
     </group>
   );
 }
 
 // Rooftop Solar PV Installation Mounted Directly on house.glb Roof Slope
-function HouseRooftopSolar({ isSelected }: { isSelected: boolean }) {
+function HouseRooftopSolar({ isSelected, isBlackout = false }: { isSelected: boolean; isBlackout?: boolean }) {
   return (
     <group position={[0, 0, 0]}>
       {/* Front / Primary Roof Slope (pitch sloping +X, rotZ ~ -60deg) */}
@@ -124,13 +108,56 @@ function HouseRooftopSolar({ isSelected }: { isSelected: boolean }) {
         </group>
       </group>
 
-      {/* Solar Generation Active Glow Indicator */}
-      <pointLight 
-        position={[-0.8, 2.2, 0]} 
-        intensity={isSelected ? 2.0 : 1.0} 
-        distance={3.5} 
-        color="#D99A22" 
-      />
+      {/* Solar Generation Active Glow Indicator (Off during blackout) */}
+      {!isBlackout && (
+        <pointLight 
+          position={[-0.8, 2.2, 0]} 
+          intensity={isSelected ? 2.0 : 1.0} 
+          distance={3.5} 
+          color="#D99A22" 
+        />
+      )}
+    </group>
+  );
+}
+
+// Solid colonial porch stairs that connect porch down to the ground/walkway without mid-air floating gaps (Images 1-3)
+function HouseFrontStairs() {
+  const steps = [
+    { y: 0.38, z: 0.98, depth: 0.12 },
+    { y: 0.29, z: 1.08, depth: 0.12 },
+    { y: 0.20, z: 1.18, depth: 0.12 },
+    { y: 0.11, z: 1.28, depth: 0.12 },
+    { y: 0.035, z: 1.38, depth: 0.14 },
+  ];
+
+  return (
+    <group position={[0, 0, 0]}>
+      {/* Solid Staircase White Side Stringers */}
+      <mesh position={[-0.37, 0.21, 1.18]} castShadow receiveShadow>
+        <boxGeometry args={[0.04, 0.44, 0.52]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.4} />
+      </mesh>
+      <mesh position={[0.37, 0.21, 1.18]} castShadow receiveShadow>
+        <boxGeometry args={[0.04, 0.44, 0.52]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.4} />
+      </mesh>
+
+      {/* Solid Step Risers & Handsome Wooden Treads Touching Ground */}
+      {steps.map((st, idx) => (
+        <group key={idx}>
+          {/* White Riser & Foundation Block extending solidly to ground */}
+          <mesh position={[0, st.y / 2, st.z]} receiveShadow castShadow>
+            <boxGeometry args={[0.70, st.y, st.depth]} />
+            <meshStandardMaterial color="#F1F5F9" roughness={0.5} />
+          </mesh>
+          {/* Solid Wooden Tread Plank */}
+          <mesh position={[0, st.y + 0.012, st.z]} receiveShadow castShadow>
+            <boxGeometry args={[0.74, 0.024, st.depth + 0.02]} />
+            <meshStandardMaterial color="#B58D57" roughness={0.65} />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }
@@ -140,56 +167,139 @@ function House3D({
   house, 
   isSelected, 
   isHovered, 
+  isLineCut = false,
+  showBadge = true,
   onSelect, 
   onHover
 }: { 
   house: HouseData; 
   isSelected: boolean; 
   isHovered: boolean; 
-  onSelect: () => void; 
+  isLineCut?: boolean;
+  showBadge?: boolean;
+  onSelect: (isMulti: boolean) => void; 
   onHover: (hovered: boolean) => void;
 }) {
   const { scene } = useGLTF("/models/house.glb");
   const isProsumer = house.type === "prosumer";
+  const isLineCutActive = isLineCut || house.powerState === "line_cut";
+  // Consumers without line enter blackout; prosumers run on islanded battery/solar
+  const isBlackout = (!isProsumer && house.powerState !== "grid") || house.powerState === "blackout" || (!isProsumer && isLineCutActive) || (house.isOutage && !isProsumer);
+  const isOnBattery = isProsumer && (house.powerState === "battery" || isLineCutActive);
 
-  // Deep clone GLTF scene hierarchy for each of the 12 independent house instances
+  // Deep clone GLTF scene hierarchy and mesh materials for each independent house instance
   const clonedScene = useMemo(() => {
     const c = scene.clone(true);
     c.traverse((node) => {
       if ((node as THREE.Mesh).isMesh) {
-        node.castShadow = true;
-        node.receiveShadow = true;
+        const mesh = node as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        
+        // Lower the house parcel grass mesh so it sits on the ground without cutting flowers or postboxes (Request 8)
+        const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mesh.name === "Object_2" || mesh.name === "Object_0" || (mat && (mat as THREE.Material).name === "Material.013")) {
+          mesh.geometry = mesh.geometry.clone();
+          mesh.geometry.translate(0, 0, -2.56); // World Y translates directly from 0.3093 down to 0.0044 flush on ground
+        }
+
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((m) => m.clone());
+        } else if (mesh.material) {
+          mesh.material = mesh.material.clone();
+        }
       }
     });
     return c;
   }, [scene]);
 
+  // Dynamically update materials when house enters or exits blackout
+  useEffect(() => {
+    clonedScene.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mesh = node as THREE.Mesh;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((mat) => {
+          if (!mat) return;
+          const stdMat = mat as THREE.MeshStandardMaterial;
+          if (isBlackout) {
+            if (!stdMat.userData.originalColor) {
+              stdMat.userData.originalColor = stdMat.color.clone();
+              stdMat.userData.originalEmissive = stdMat.emissive ? stdMat.emissive.clone() : new THREE.Color(0, 0, 0);
+              stdMat.userData.originalEmissiveIntensity = stdMat.emissiveIntensity || 0;
+            }
+            if (stdMat.name === "window") {
+              stdMat.color.setHex(0x0f172a); // dark charcoal window during blackout
+              if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
+              stdMat.emissiveIntensity = 0;
+              stdMat.roughness = 0.95;
+            } else {
+              // Dim walls, roof, doors
+              stdMat.color.copy(stdMat.userData.originalColor).multiplyScalar(0.42);
+              if (stdMat.emissive) stdMat.emissive.setHex(0x000000);
+              stdMat.emissiveIntensity = 0;
+            }
+          } else if (stdMat.userData.originalColor) {
+            stdMat.color.copy(stdMat.userData.originalColor);
+            if (stdMat.emissive && stdMat.userData.originalEmissive) {
+              stdMat.emissive.copy(stdMat.userData.originalEmissive);
+              stdMat.emissiveIntensity = stdMat.userData.originalEmissiveIntensity;
+            }
+          }
+        });
+      }
+    });
+  }, [clonedScene, isBlackout]);
+
   // House scaling & base alignment
   const scale = 0.28;
   const yOffset = 0.29; // aligns house flush on ground pad
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   return (
     <group 
       position={[house.x, 0, house.z]} 
       rotation={[0, house.rotationY, 0]}
+      onPointerDown={(e) => {
+        pointerDownPos.current = { x: e.clientX, y: e.clientY };
+      }}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect();
-      }}
-      onPointerOver={(e) => {
-        e.stopPropagation();
-        document.body.style.cursor = "pointer";
-        onHover(true);
-      }}
-      onPointerOut={() => {
-        document.body.style.cursor = "auto";
-        onHover(false);
+        if (pointerDownPos.current) {
+          const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
+          if (dist > 5) {
+            // User was dragging or orbiting the 3D scene, not clicking to select
+            return;
+          }
+        }
+        onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
       }}
     >
+      {/* Invisible Single-Mesh Collider for Jitter-Free Hover & Click Hit Testing */}
+      <mesh
+        position={[0, 1.4, 0]}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = "pointer";
+          onHover(true);
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = "auto";
+          onHover(false);
+        }}
+      >
+        <boxGeometry args={[3.8, 2.8, 3.8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+
       {/* Voxel Cobblestone Foundation Pad */}
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <boxGeometry args={[3.4, 0.04, 3.4]} />
-        <meshStandardMaterial color="#B0B2BA" roughness={0.8} />
+        <meshStandardMaterial 
+          color={isBlackout ? "#332228" : isLineCutActive ? "#42281D" : "#B0B2BA"} 
+          roughness={0.8} 
+        />
       </mesh>
 
       {/* house.glb 3D Model Asset */}
@@ -197,10 +307,33 @@ function House3D({
         <primitive object={clonedScene} />
       </group>
 
+      {/* Solid Front Porch Steps Ground-Touchdown (Images 1-3) */}
+      <HouseFrontStairs />
+
       {/* PROSUMERS (P1 to P6): Rooftop Solar PV Installation */}
       {/* CONSUMERS (C1 to C6): Standard clean roof */}
       {isProsumer && (
-        <HouseRooftopSolar isSelected={isSelected} />
+        <HouseRooftopSolar isSelected={isSelected} isBlackout={isBlackout} />
+      )}
+
+      {/* Blackout Emergency Beacon */}
+      {isBlackout && (
+        <pointLight 
+          position={[0, 0.7, 0]} 
+          intensity={0.8} 
+          distance={2.8} 
+          color="#E11D48" 
+        />
+      )}
+
+      {/* Islanded Prosumer Battery Glow */}
+      {isOnBattery && (
+        <pointLight 
+          position={[0, 1.4, 0]} 
+          intensity={1.2} 
+          distance={3.2} 
+          color="#F59E0B" 
+        />
       )}
 
       {/* Selection / Hover Glow Ring */}
@@ -208,39 +341,89 @@ function House3D({
         <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[1.75, 2.15, 32]} />
           <meshBasicMaterial 
-            color={isSelected ? "#5277D5" : isProsumer ? "#D99A22" : "#D94F58"} 
+            color={
+              isLineCutActive
+                ? "#D97706"
+                : isBlackout 
+                ? "#E11D48" 
+                : isOnBattery 
+                ? "#F59E0B" 
+                : isSelected 
+                ? "#5277D5" 
+                : isProsumer 
+                ? "#D99A22" 
+                : "#D94F58"
+            } 
             transparent 
             opacity={0.9} 
           />
         </mesh>
       )}
 
-      {/* Floating Overhead Badge */}
-      <Html position={[0, 2.5, 0]} center distanceFactor={24}>
-        <div className={`px-2.5 py-1 rounded-full text-[11px] font-sans tracking-tight pointer-events-none transition-all flex items-center gap-1.5 whitespace-nowrap backdrop-blur-md ${
-          isSelected 
-            ? "bg-[#1D1D1F] text-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-[#5277D5] font-semibold" 
-            : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
-        }`}>
-          <span className={`w-2 h-2 rounded-full ${
-            isSelected 
-              ? "bg-[#5277D5]" 
-              : isProsumer 
-              ? "bg-[#D99A22]" 
-              : "bg-[#5277D5]"
-          }`} />
-          <span className="font-semibold">{house.id}</span>
-          <span className={`font-mono text-[10px] ${
-            isSelected 
-              ? "text-zinc-300"
-              : house.surplusKwh >= 0 
-              ? "text-[#27845B]" 
-              : "text-[#D94F58]"
+      {/* Floating Overhead Badge: Clean Light Theme (P6 | +3.6 kWh) */}
+      {showBadge && (
+        <Html position={[0, 2.5, 0]} center distanceFactor={24} zIndexRange={[1, 10]}>
+          <div className={`px-2.5 py-1.5 rounded-full text-xs font-sans tracking-tight pointer-events-none transition-all flex items-center gap-2 whitespace-nowrap backdrop-blur-md leading-none select-none ${
+            isLineCutActive
+              ? "bg-[#1C1405]/95 text-white border-2 border-[#D97706] shadow-[0_4px_16px_rgba(217,119,6,0.35)]"
+              : isBlackout
+              ? "bg-[#1C0A0E]/95 text-white border-2 border-[#E11D48] shadow-[0_4px_16px_rgba(225,29,72,0.4)]"
+              : isOnBattery
+              ? "bg-[#1A1404]/95 text-[#FEF08A] border-2 border-[#F59E0B] shadow-[0_4px_16px_rgba(245,158,11,0.3)]"
+              : isSelected 
+              ? "bg-white/95 text-[#1D1D1F] border border-[#5277D5] shadow-[0_4px_16px_rgba(82,119,213,0.25)] ring-2 ring-[#5277D5] font-semibold"
+              : "bg-white/90 text-[#1D1D1F] border border-[#D8D8DE] shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
           }`}>
-            {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)}u` : `${house.surplusKwh.toFixed(1)}u`}
-          </span>
-        </div>
-      </Html>
+            <span className={`font-semibold text-xs leading-none ${
+              isLineCutActive 
+                ? "text-[#FDE68A]" 
+                : isBlackout 
+                ? "text-[#FECDD3]" 
+                : isOnBattery 
+                ? "text-[#FEF08A]" 
+                : "text-[#1D1D1F]"
+            }`}>
+              {house.id}
+            </span>
+
+            {/* Crisp vertical separator bar: perfectly middle-aligned and darker */}
+            <span 
+              className={`w-[1.5px] h-3 rounded-full shrink-0 ${
+                isLineCutActive 
+                  ? "bg-[#FDE68A]/60" 
+                  : isBlackout 
+                  ? "bg-[#FECDD3]/60" 
+                  : isOnBattery 
+                  ? "bg-[#FEF08A]/60" 
+                  : "bg-[#475569]"
+              }`} 
+              aria-hidden="true"
+            />
+
+            {isLineCutActive ? (
+              <span className="font-mono text-xs leading-none text-[#FDE68A] font-bold uppercase tracking-wider">
+                Line Cut
+              </span>
+            ) : isBlackout ? (
+              <span className="font-mono text-xs leading-none text-[#FDA4AF] font-bold uppercase tracking-wider">
+                Blackout
+              </span>
+            ) : isOnBattery ? (
+              <span className="font-mono text-xs leading-none text-[#FDE047] font-semibold tabular-nums">
+                {house.batteryKwh.toFixed(1)} kWh
+              </span>
+            ) : (
+              <span className={`font-mono text-xs leading-none tabular-nums font-medium ${
+                house.surplusKwh >= 0 
+                  ? "text-[#16A34A]" 
+                  : "text-[#DC2626]"
+              }`}>
+                {house.surplusKwh >= 0 ? `+${house.surplusKwh.toFixed(1)} kWh` : `${house.surplusKwh.toFixed(1)} kWh`}
+              </span>
+            )}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -250,7 +433,7 @@ function House3D({
 // =========================================================================
 
 // Authentic Minecraft Voxel Tree (Oak, Spruce, Birch)
-function MinecraftTree({ 
+const MinecraftTree = memo(function MinecraftTree({ 
   x, 
   z, 
   y = 0, 
@@ -347,10 +530,10 @@ function MinecraftTree({
       )}
     </group>
   );
-}
+});
 
 // Minecraft Voxel Flowers (Poppies, Dandelions, Cornflowers)
-function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: number }) {
+const MinecraftFlowerCluster = memo(function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: number }) {
   return (
     <group position={[x, y, z]}>
       {/* Red Poppy */}
@@ -384,13 +567,13 @@ function MinecraftFlowerCluster({ x, z, y = 0 }: { x: number; z: number; y?: num
       </mesh>
     </group>
   );
-}
+});
 
 // =========================================================================
 // BOUNDED MINECRAFT VOXEL TERRAIN & NATURAL SURROUNDINGS
 // =========================================================================
 
-function MinecraftVoxelTerrain() {
+const MinecraftVoxelTerrain = memo(function MinecraftVoxelTerrain() {
   return (
     <group>
       {/* ----------------- 1. FINITE VOXEL BASE CHUNK SLAB (52 x 38) ----------------- */}
@@ -469,13 +652,19 @@ function MinecraftVoxelTerrain() {
       </mesh>
     </group>
   );
-}
+});
 
 // =========================================================================
 // ROAD, SIDEWALKS, PARCELS & STREET LIGHTS
 // =========================================================================
 
-function MinecraftRoadAndParcels() {
+const MinecraftRoadAndParcels = memo(function MinecraftRoadAndParcels({ 
+  houses = HOUSES_CONFIG as unknown as HouseData[], 
+  isSocietyOutage = false 
+}: { 
+  houses?: HouseData[]; 
+  isSocietyOutage?: boolean;
+}) {
   return (
     <group>
       {/* Center Asphalt Road (Finite: x in [-23.5, 23.5], z in [-1.8, 1.8]) */}
@@ -525,7 +714,7 @@ function MinecraftRoadAndParcels() {
       </mesh>
 
       {/* 12 Individual Cobblestone Parcel Walkways from Sidewalk to Front Porch */}
-      {NEIGHBORHOOD_HOUSES.map((house) => {
+      {houses.map((house) => {
         const isNorth = house.z < 0;
         const walkZ = isNorth ? -3.65 : 3.65;
         return (
@@ -558,8 +747,8 @@ function MinecraftRoadAndParcels() {
         </group>
       ))}
 
-      {/* Minecraft-Style Glowstone Street Lamps along Sidewalks */}
-      {[-12.5, -7.5, -2.5, 2.5, 7.5, 12.5].map((xLamp, idx) => (
+      {/* Minecraft-Style Glowstone Street Lamps along Sidewalks at Parcel Divisions (Request 9) */}
+      {[-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0].map((xLamp, idx) => (
         <group key={`lamp-pair-${idx}`}>
           {/* North Lamp */}
           <group position={[xLamp, 0, -2.15]}>
@@ -571,17 +760,22 @@ function MinecraftRoadAndParcels() {
               <boxGeometry args={[0.1, 0.1, 0.35]} />
               <meshStandardMaterial color="#334155" />
             </mesh>
-            {/* Glowstone Lantern Cube */}
+            {/* Glowstone Lantern Cube (Off during society outage) */}
             <mesh position={[0, 2.05, 0.28]}>
               <boxGeometry args={[0.3, 0.34, 0.3]} />
               <meshStandardMaterial 
-                color="#FDE047" 
-                emissive="#FACC15" 
-                emissiveIntensity={1.6} 
-                roughness={0.2} 
+                color={isSocietyOutage ? "#334155" : "#FDE047"} 
+                emissive={isSocietyOutage ? "#000000" : "#FACC15"} 
+                emissiveIntensity={isSocietyOutage ? 0 : 1.6} 
+                roughness={isSocietyOutage ? 0.9 : 0.2} 
               />
             </mesh>
-            <pointLight position={[0, 1.9, 0.3]} intensity={1.1} distance={6.0} color="#FEF08A" />
+            <pointLight 
+              position={[0, 1.9, 0.3]} 
+              intensity={isSocietyOutage ? 0 : 1.1} 
+              distance={6.0} 
+              color="#FEF08A" 
+            />
           </group>
 
           {/* South Lamp */}
@@ -594,23 +788,28 @@ function MinecraftRoadAndParcels() {
               <boxGeometry args={[0.1, 0.1, 0.35]} />
               <meshStandardMaterial color="#334155" />
             </mesh>
-            {/* Glowstone Lantern Cube */}
+            {/* Glowstone Lantern Cube (Off during society outage) */}
             <mesh position={[0, 2.05, -0.28]}>
               <boxGeometry args={[0.3, 0.34, 0.3]} />
               <meshStandardMaterial 
-                color="#FDE047" 
-                emissive="#FACC15" 
-                emissiveIntensity={1.6} 
-                roughness={0.2} 
+                color={isSocietyOutage ? "#334155" : "#FDE047"} 
+                emissive={isSocietyOutage ? "#000000" : "#FACC15"} 
+                emissiveIntensity={isSocietyOutage ? 0 : 1.6} 
+                roughness={isSocietyOutage ? 0.9 : 0.2} 
               />
             </mesh>
-            <pointLight position={[0, 1.9, -0.3]} intensity={1.1} distance={6.0} color="#FEF08A" />
+            <pointLight 
+              position={[0, 1.9, -0.3]} 
+              intensity={isSocietyOutage ? 0 : 1.1} 
+              distance={6.0} 
+              color="#FEF08A" 
+            />
           </group>
         </group>
       ))}
 
       {/* Green Smart-Meter / Distribution Utility Boxes at Plot Entrances */}
-      {NEIGHBORHOOD_HOUSES.map((h) => (
+      {houses.map((h) => (
         <group key={`util-${h.id}`} position={[h.x - 1.1, 0, h.z < 0 ? -2.7 : 2.7]}>
           <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
             <boxGeometry args={[0.42, 0.56, 0.42]} />
@@ -619,19 +818,27 @@ function MinecraftRoadAndParcels() {
           {/* Status Telemetry LED */}
           <mesh position={[0, 0.44, h.z < 0 ? 0.22 : -0.22]}>
             <boxGeometry args={[0.1, 0.05, 0.02]} />
-            <meshBasicMaterial color={h.isOutage ? "#EF4444" : "#22C55E"} />
+            <meshBasicMaterial 
+              color={
+                h.powerState === "blackout" || h.isOutage 
+                  ? "#EF4444" 
+                  : h.powerState === "battery" 
+                  ? "#F59E0B" 
+                  : "#22C55E"
+              } 
+            />
           </mesh>
         </group>
       ))}
     </group>
   );
-}
+});
 
 // =========================================================================
 // COMMUNITY MICROGRID INFRASTRUCTURE (BESS SUBSTATION & SOLAR CARPORT)
 // =========================================================================
 
-function MicrogridCommunityInfrastructure() {
+const MicrogridCommunityInfrastructure = memo(function MicrogridCommunityInfrastructure() {
   return (
     <group>
       {/* ----------------- WEST END: COMMUNITY BESS & SUBSTATION ----------------- */}
@@ -750,19 +957,20 @@ function MicrogridCommunityInfrastructure() {
 
         {/* Elevated Tilted Solar Array Canopy */}
         <group position={[0, 2.85, 0]} rotation={[0.15, 0, 0]}>
+          {/* Canopy Mounting Frame */}
           <mesh castShadow receiveShadow>
             <boxGeometry args={[5.2, 0.12, 4.4]} />
-            <meshStandardMaterial color="#0F172A" metalness={0.85} roughness={0.2} />
+            <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.3} />
           </mesh>
-          {/* Photovoltaic Cells Active Surface */}
-          <mesh position={[0, 0.08, 0]}>
-            <planeGeometry args={[4.9, 4.1]} />
+          {/* Photovoltaic Solar Modules Surface (Flush on deck, no perpendicular standing layer) */}
+          <mesh position={[0, 0.065, 0]} castShadow receiveShadow>
+            <boxGeometry args={[4.95, 0.02, 4.15]} />
             <meshStandardMaterial 
-              color="#0284C7" 
-              metalness={0.9} 
-              roughness={0.15} 
-              emissive="#0369A1" 
-              emissiveIntensity={0.3} 
+              color="#0F172A" 
+              metalness={0.85} 
+              roughness={0.2} 
+              emissive="#1E3A8A" 
+              emissiveIntensity={0.22} 
             />
           </mesh>
         </group>
@@ -801,13 +1009,13 @@ function MicrogridCommunityInfrastructure() {
       </group>
     </group>
   );
-}
+});
 
 // =========================================================================
 // MINECRAFT PERIMETER TREES & NATURAL FOLIAGE BARRIER
 // =========================================================================
 
-function MinecraftPerimeterForest() {
+const MinecraftPerimeterForest = memo(function MinecraftPerimeterForest() {
   const treeList = useMemo(() => [
     // North Perimeter Elevated Ridge Trees (Naturally enclosing North boundary)
     { x: -24.0, z: -14.5, y: 0.6, type: "spruce" as const, scale: 1.15 },
@@ -882,7 +1090,7 @@ function MinecraftPerimeterForest() {
       ))}
     </group>
   );
-}
+});
 
 // =========================================================================
 // ENERGY CONDUIT & PARTICLES
@@ -890,22 +1098,25 @@ function MinecraftPerimeterForest() {
 
 function MicrogridEnergyFlow({ 
   houses, 
-  activeTrade 
+  activeTrade,
+  cutLines = []
 }: { 
   houses: HouseData[]; 
   activeTrade: { from: string; to: string } | null;
+  cutLines?: number[];
 }) {
   const particlesRef = useRef<THREE.Points>(null!);
   const count = 90;
 
-  const [positions] = useMemo(() => {
+  const positions = useMemo(() => {
     const pos = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 36;
+      // Deterministic particle spread along the conduit line
+      pos[i * 3] = ((i * 17) % 36) - 18;
       pos[i * 3 + 1] = 0.12;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 4;
+      pos[i * 3 + 2] = (((i * 23) % 40) / 10) - 2;
     }
-    return [pos];
+    return pos;
   }, [count]);
 
   useFrame((_, delta) => {
@@ -921,11 +1132,47 @@ function MicrogridEnergyFlow({
 
   return (
     <group>
-      {/* Underground Microgrid Conduit Line */}
+      {/* Underground Microgrid Conduit Main Line */}
       <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[42, 0.1]} />
         <meshBasicMaterial color="#5277D5" />
       </mesh>
+
+      {/* House Feeder Lines & Cut Line Severed Indicators */}
+      {houses.map((h) => {
+        const isCut = cutLines.includes(h.householdId) || h.powerState === "line_cut";
+        const isNorth = h.z < 0;
+        const branchZ = isNorth ? -1.6 : 1.6;
+        const severZ = isNorth ? -2.2 : 2.2;
+
+        return (
+          <group key={`feeder-${h.id}`}>
+            {!isCut ? (
+              // Intact Feeder line connecting main conduit to house
+              <mesh position={[h.x, 0.04, branchZ]} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[0.08, 3.2]} />
+                <meshBasicMaterial color="#5277D5" opacity={0.65} transparent />
+              </mesh>
+            ) : (
+              // Severed Feeder Line with disconnected gap and glowing spark marker
+              <group>
+                <mesh position={[h.x, 0.04, isNorth ? -0.8 : 0.8]} rotation={[-Math.PI / 2, 0, 0]}>
+                  <planeGeometry args={[0.08, 1.4]} />
+                  <meshBasicMaterial color="#94A3B8" opacity={0.4} transparent />
+                </mesh>
+                {/* Severed Line Spark Beacon */}
+                <group position={[h.x, 0.12, severZ]}>
+                  <mesh>
+                    <boxGeometry args={[0.36, 0.08, 0.16]} />
+                    <meshStandardMaterial color="#DC2626" emissive="#EF4444" emissiveIntensity={1.2} />
+                  </mesh>
+                  <pointLight intensity={1.8} distance={2.8} color="#F59E0B" />
+                </group>
+              </group>
+            )}
+          </group>
+        );
+      })}
 
       {/* Energy Flow Particles */}
       <points ref={particlesRef}>
@@ -990,7 +1237,7 @@ function ActiveTradeBeam({
 }
 
 // =========================================================================
-// CAMERA CONTROLLER WITH STRICT BOUNDARY CLAMPING
+// CAMERA CONTROLLER WITH FRONT VIEW FOCUS & INTERACTION STABILITY (Requests 6 & 7)
 // =========================================================================
 
 function CameraController({ 
@@ -998,54 +1245,87 @@ function CameraController({
   controlsRef
 }: { 
   selectedHouse: HouseData | null; 
-  controlsRef: React.RefObject<any>;
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
 }) {
   const isTransitioning = useRef(false);
   const prevSelectedId = useRef<string | null>(null);
+  const transitionProgress = useRef(0);
+  const startPos = useRef(new THREE.Vector3(0, 15, 23));
+  const startTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+
+  // Stop camera transition immediately when the user rotates, drags, or zooms (Request 6)
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const handleInteractionStart = () => {
+      isTransitioning.current = false;
+    };
+    controls.addEventListener("start", handleInteractionStart);
+    return () => {
+      controls.removeEventListener("start", handleInteractionStart);
+    };
+  }, [controlsRef]);
 
   useEffect(() => {
-    // Only transition camera when user clicks a different house or resets view
+    // Only transition camera when user selects a different house or resets view
     if (selectedHouse?.id !== prevSelectedId.current) {
       isTransitioning.current = true;
+      transitionProgress.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
+      if (controlsRef.current) {
+        startPos.current.copy(controlsRef.current.object.position);
+        startTarget.current.copy(controlsRef.current.target);
+      }
     }
-  }, [selectedHouse]);
+  }, [selectedHouse, controlsRef]);
 
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
 
-    // STRICT WORLD BOUNDARY CLAMPING:
-    // Clamp the OrbitControls look-at target strictly within the central community microgrid.
-    // This strictly prevents panning the camera beyond the bounded playable diorama!
-    controlsRef.current.target.x = THREE.MathUtils.clamp(controlsRef.current.target.x, -10.0, 10.0);
-    controlsRef.current.target.y = THREE.MathUtils.clamp(controlsRef.current.target.y, 0.0, 2.0);
-    controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -5.0, 5.0);
+    // EXPANDED BOUNDARY CLAMPING: Accommodates corner houses (x = ±12.5) without twitching/jitter (Request 6)
+    controlsRef.current.target.x = THREE.MathUtils.clamp(controlsRef.current.target.x, -18.0, 18.0);
+    controlsRef.current.target.y = THREE.MathUtils.clamp(controlsRef.current.target.y, 0.0, 4.0);
+    controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -8.0, 8.0);
 
     if (isTransitioning.current) {
+      // Smooth cubic ease out progression
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.2);
+      const t = 1 - Math.pow(1 - transitionProgress.current, 3);
+
       if (selectedHouse) {
-        // Zoom and focus smoothly on selected house
-        const targetPos = new THREE.Vector3(
-          selectedHouse.x + (selectedHouse.z > 0 ? 1.8 : -1.8),
-          3.8,
-          selectedHouse.z + (selectedHouse.z > 0 ? 6.2 : -6.2)
-        );
-        const targetLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
+        // FRONT VIEW: Look at the house from the central road (street side facing the front porch) (Request 7)
+        // North row (z < 0): front porch faces +Z (road), camera placed at z = selectedHouse.z + 5.2
+        // South row (z > 0): front porch faces -Z (road), camera placed at z = selectedHouse.z - 5.2
+        const isSouthRow = selectedHouse.z > 0;
+        const cameraZ = isSouthRow ? selectedHouse.z - 5.2 : selectedHouse.z + 5.2;
+        const destPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
+        const destLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
 
-        state.camera.position.lerp(targetPos, delta * 4.0);
-        controlsRef.current.target.lerp(targetLook, delta * 4.0);
+        controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
 
-        if (state.camera.position.distanceTo(targetPos) < 0.08) {
+        const currentPos = new THREE.Vector3().lerpVectors(startPos.current, destPos, t);
+        // For South row houses: if moving from behind (+Z) to front (-Z), swing the camera around the side
+        // in an arc so it NEVER passes through the roof zenith or triggers top view gimbal clamping
+        if (isSouthRow && startPos.current.z > selectedHouse.z) {
+          const arcSide = selectedHouse.x >= 0 ? -1 : 1;
+          const arc = Math.sin(t * Math.PI) * 4.5 * arcSide;
+          currentPos.x += arc;
+        }
+
+        state.camera.position.copy(currentPos);
+
+        if (transitionProgress.current >= 1 || state.camera.position.distanceTo(destPos) < 0.08) {
           isTransitioning.current = false;
         }
       } else {
         // Return smoothly to default cinematic aerial angle
-        const defaultPos = new THREE.Vector3(0, 15, 23);
-        const defaultLook = new THREE.Vector3(0, 0.5, 0);
+        const destPos = new THREE.Vector3(0, 15, 23);
+        const destLook = new THREE.Vector3(0, 0.5, 0);
 
-        state.camera.position.lerp(defaultPos, delta * 3.0);
-        controlsRef.current.target.lerp(defaultLook, delta * 3.0);
+        controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
+        state.camera.position.lerpVectors(startPos.current, destPos, t);
 
-        if (state.camera.position.distanceTo(defaultPos) < 0.15) {
+        if (transitionProgress.current >= 1 || state.camera.position.distanceTo(destPos) < 0.1) {
           isTransitioning.current = false;
         }
       }
@@ -1061,12 +1341,185 @@ function CameraController({
 // =========================================================================
 
 export default function NeighborhoodMicrogrid3D() {
-  const [houses, setHouses] = useState<HouseData[]>(NEIGHBORHOOD_HOUSES);
-  const [selectedHouse, setSelectedHouse] = useState<HouseData | null>(null);
+  const { 
+    houses, 
+    isLiveConnected, 
+    lastTickTime, 
+    isSocietyOutage, 
+    cutLines,
+    energyRequests,
+    autoAcceptEnabled,
+    toggleAutoAcceptAction,
+    createEnergyRequestAction,
+    respondEnergyRequestAction,
+    triggerSocietyOutage, 
+    restoreSocietyGrid,
+    resetMicrogridAction,
+    cutLinesAction,
+    restoreLinesAction
+  } = useMicrogridData();
+  const [selectedHouseIds, setSelectedHouseIds] = useState<string[]>([]);
   const [hoveredHouseId, setHoveredHouseId] = useState<string | null>(null);
   const [activeTrade, setActiveTrade] = useState<{ from: string; to: string } | null>(null);
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
-  const controlsRef = useRef<any>(null);
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+
+  // Energy Request Modal state (M4)
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [modalRequesterId, setModalRequesterId] = useState<number | null>(null);
+  const [modalDurationHours, setModalDurationHours] = useState<number>(4.0);
+  const [modalKwh, setModalKwh] = useState<string>("3.80");
+  const [isEstimatingModal, setIsEstimatingModal] = useState<boolean>(false);
+  const [isSubmittingModal, setIsSubmittingModal] = useState<boolean>(false);
+  const [modalSuccessMsg, setModalSuccessMsg] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  // Multi-selection handler: supports single-click, Shift+Click, Ctrl/Cmd+Click
+  const handleHouseSelect = (houseId: string, isMulti: boolean) => {
+    if (isMulti) {
+      setSelectedHouseIds((prev) =>
+        prev.includes(houseId) ? prev.filter((id) => id !== houseId) : [...prev, houseId]
+      );
+    } else {
+      // Keep house focused; do not toggle off and reset view on drag release or re-click
+      setSelectedHouseIds([houseId]);
+    }
+  };
+
+  // Derive selected houses and single selected house for focus
+  const selectedHouses = useMemo(
+    () => houses.filter((h) => selectedHouseIds.includes(h.id)),
+    [houses, selectedHouseIds]
+  );
+  const selectedHouse = selectedHouses.length === 1 ? selectedHouses[0] : null;
+
+  // Active incoming ping for currently selected prosumer
+  const incomingPing = useMemo(() => {
+    if (!selectedHouse || selectedHouse.type !== "prosumer") return null;
+    return energyRequests.find(
+      (r) => r.status === "pinged" && r.current_candidate_household_id === selectedHouse.householdId
+    );
+  }, [selectedHouse, energyRequests]);
+
+  // Load estimated energy needed when request modal opens for a consumer
+  useEffect(() => {
+    if (!isRequestModalOpen || !modalRequesterId) return;
+    let isCancelled = false;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5001";
+    async function loadEstimate() {
+      setIsEstimatingModal(true);
+      try {
+        const res = await fetch(`${backendUrl}/api/backup/estimate?hours=${modalDurationHours}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (!isCancelled && Array.isArray(json.needs)) {
+            const need = json.needs.find((n: { household_id: number }) => n.household_id === modalRequesterId);
+            if (need && need.need_kwh) {
+              setModalKwh(need.need_kwh.toFixed(2));
+            }
+          }
+        }
+      } catch {
+        if (!isCancelled) setModalKwh((0.95 * modalDurationHours).toFixed(2));
+      } finally {
+        if (!isCancelled) setIsEstimatingModal(false);
+      }
+    }
+    loadEstimate();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isRequestModalOpen, modalRequesterId, modalDurationHours]);
+
+  const handleModalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalRequesterId) return;
+    const kwh = parseFloat(modalKwh);
+    if (!kwh || kwh <= 0) {
+      setModalError("Please enter a valid energy amount in kWh");
+      return;
+    }
+    setIsSubmittingModal(true);
+    setModalError(null);
+    const res = await createEnergyRequestAction({
+      requesterHouseholdId: modalRequesterId,
+      unitsKwh: kwh,
+      durationHours: modalDurationHours,
+      priceEth: 0.0001,
+    });
+    setIsSubmittingModal(false);
+    if (res.success) {
+      setModalSuccessMsg(`Dispatched emergency request for ${kwh} kWh to nearest prosumer!`);
+      setTimeout(() => {
+        setIsRequestModalOpen(false);
+        setModalSuccessMsg(null);
+      }, 2500);
+    } else {
+      setModalError(res.error || "Failed to submit request");
+    }
+  };
+
+  // Trigger 3D Energy Beam animation whenever a request is settling or settled (M5)
+  const lastSettledIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (energyRequests.length === 0) {
+      setActiveTrade(null);
+      lastSettledIdRef.current = null;
+      return;
+    }
+    const latestSettled = energyRequests.find(
+      (r) => (r.status === "settled" || r.status === "settling") && r.current_candidate_household_id
+    );
+    if (!latestSettled) {
+      setActiveTrade(null);
+      return;
+    }
+    if (latestSettled.id !== lastSettledIdRef.current) {
+      lastSettledIdRef.current = latestSettled.id;
+      // Only animate if settled within the last 15 seconds
+      const settledAgeMs = latestSettled.updated_at 
+        ? Math.abs(Date.now() - new Date(latestSettled.updated_at).getTime())
+        : 0;
+      if (settledAgeMs < 15000) {
+        const seller = houses.find((h) => h.householdId === latestSettled.current_candidate_household_id);
+        const buyer = houses.find((h) => h.householdId === latestSettled.requester_household_id);
+        if (seller && buyer) {
+          setActiveTrade({ from: seller.id, to: buyer.id });
+          const timer = setTimeout(() => {
+            setActiveTrade(null);
+          }, 7000);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+  }, [energyRequests, houses]);
+
+  const handleCopyAddress = (addr: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(addr);
+      setCopiedAddress(true);
+      setTimeout(() => setCopiedAddress(false), 1800);
+    }
+  };
+
+  // Community aggregated metrics derived from the 12 houses
+  const totalGen = useMemo(
+    () => Number(houses.reduce((acc, h) => acc + h.solarKwh, 0).toFixed(1)),
+    [houses]
+  );
+  const totalLoad = useMemo(
+    () => Number(houses.reduce((acc, h) => acc + h.usageKwh, 0).toFixed(1)),
+    [houses]
+  );
+  const netSurplus = useMemo(
+    () => Number((totalGen - totalLoad).toFixed(1)),
+    [totalGen, totalLoad]
+  );
+  const selfSufficiency = useMemo(
+    () => (totalLoad > 0 ? Math.min(100, Number(((totalGen / totalLoad) * 100).toFixed(1))) : 100),
+    [totalGen, totalLoad]
+  );
 
   // Handle P2P Trade from selected house
   const handleInitiateTrade = () => {
@@ -1077,10 +1530,10 @@ export default function NeighborhoodMicrogrid3D() {
 
     if (selectedHouse.type === "prosumer") {
       sourceHouse = selectedHouse;
-      targetHouse = houses.find((h) => h.type === "consumer" && h.isOutage) || houses[9]; // C6
+      targetHouse = houses.find((h) => h.type === "consumer" && h.isOutage) || houses[11]; // C6
     } else {
       targetHouse = selectedHouse;
-      sourceHouse = houses.find((h) => h.type === "prosumer" && h.surplusKwh > 1.5) || houses[3]; // P3
+      sourceHouse = houses.find((h) => h.type === "prosumer" && h.surplusKwh > 1.5) || houses[5]; // P3
     }
 
     setActiveTrade({ from: sourceHouse.id, to: targetHouse.id });
@@ -1088,23 +1541,54 @@ export default function NeighborhoodMicrogrid3D() {
 
     setTimeout(() => {
       setTradeSuccess(true);
-      // Update local house stats
-      setHouses((prev) =>
-        prev.map((h) => {
-          if (h.id === sourceHouse.id) {
-            return { ...h, surplusKwh: Math.max(0, Number((h.surplusKwh - 1.5).toFixed(1))) };
-          }
-          if (h.id === targetHouse.id) {
-            return { ...h, isOutage: false, usageKwh: Math.max(0, Number((h.usageKwh - 1.5).toFixed(1))), surplusKwh: Math.min(0, Number((h.surplusKwh + 1.5).toFixed(1))) };
-          }
-          return h;
-        })
-      );
     }, 2200);
+
+    setTimeout(() => {
+      setActiveTrade(null);
+    }, 6000);
   };
 
+  // Smooth scroll-to-zoom and zoom-to-page-scroll transition (Request 5 & Smoothness fix)
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!controlsRef.current) return;
+    const camera = controlsRef.current.object;
+    const target = controlsRef.current.target;
+    const distance = camera.position.distanceTo(target);
+
+    // If scrolling DOWN (deltaY > 0)
+    if (e.deltaY > 0) {
+      // Once zoomed out near max distance, disable 3D zoom so browser natively scrolls page with hardware acceleration
+      if (distance >= 37.2) {
+        controlsRef.current.enableZoom = false;
+      }
+    } else if (e.deltaY < 0) {
+      // If scrolling UP (deltaY < 0) while page is at the top, re-enable 3D zoom
+      if (window.scrollY <= 2) {
+        controlsRef.current.enableZoom = true;
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (controlsRef.current) {
+        // While scrolled down the page, disable 3D zoom so scrolling up smoothly navigates page
+        if (window.scrollY > 2) {
+          controlsRef.current.enableZoom = false;
+        } else {
+          controlsRef.current.enableZoom = true;
+        }
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
-    <div className="relative w-full h-[92vh] bg-[#DCEAF6] overflow-hidden select-none cursor-grab active:cursor-grabbing">
+    <div 
+      onWheel={handleWheel}
+      className="relative w-full h-[92vh] bg-[#DCEAF6] overflow-hidden select-none cursor-grab active:cursor-grabbing"
+    >
       
       {/* 3D WebGL Canvas */}
       <Canvas
@@ -1116,13 +1600,13 @@ export default function NeighborhoodMicrogrid3D() {
         <color attach="background" args={["#DCEAF6"]} />
         <fog attach="fog" args={["#DCEAF6", 30, 58]} />
 
-        {/* Realistic Sun & Ambient Lighting */}
-        <ambientLight intensity={1.6} color="#ffffff" />
-        <hemisphereLight args={["#E0F2FE", "#5B8C3E", 1.2]} />
+        {/* Realistic Sun & Ambient Lighting (Dims dynamically during society outage) */}
+        <ambientLight intensity={isSocietyOutage ? 0.7 : 1.6} color={isSocietyOutage ? "#cbd5e1" : "#ffffff"} />
+        <hemisphereLight args={["#E0F2FE", "#5B8C3E", isSocietyOutage ? 0.6 : 1.2]} />
         <directionalLight 
           position={[20, 30, 18]} 
-          intensity={2.4} 
-          color="#FFFDF5" 
+          intensity={isSocietyOutage ? 1.0 : 2.4} 
+          color={isSocietyOutage ? "#f1f5f9" : "#FFFDF5"} 
           castShadow 
           shadow-mapSize={2048}
           shadow-camera-near={0.5}
@@ -1134,7 +1618,7 @@ export default function NeighborhoodMicrogrid3D() {
         />
         <directionalLight 
           position={[-18, 16, -18]} 
-          intensity={0.8} 
+          intensity={isSocietyOutage ? 0.3 : 0.8} 
           color="#BAE6FD" 
         />
 
@@ -1145,7 +1629,7 @@ export default function NeighborhoodMicrogrid3D() {
         <MinecraftVoxelTerrain />
 
         {/* 2. Road, Sidewalks, Household Parcels, Walkways & Street Lamps */}
-        <MinecraftRoadAndParcels />
+        <MinecraftRoadAndParcels houses={houses} isSocietyOutage={isSocietyOutage} />
 
         {/* 3. Surrounding Microgrid Community Infrastructure (BESS Substation & Solar Carport) */}
         <MicrogridCommunityInfrastructure />
@@ -1159,16 +1643,18 @@ export default function NeighborhoodMicrogrid3D() {
             <House3D
               key={house.id}
               house={house}
-              isSelected={selectedHouse?.id === house.id}
+              isSelected={selectedHouseIds.includes(house.id)}
               isHovered={hoveredHouseId === house.id}
-              onSelect={() => setSelectedHouse(house)}
+              isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
+              showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
+              onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
               onHover={(hovered) => setHoveredHouseId(hovered ? house.id : null)}
             />
           ))}
         </Suspense>
 
-        {/* 6. Microgrid Underground Conduit & Active Trade Energy Beam */}
-        <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} />
+        {/* 6. Microgrid Underground Conduit & Active Trade Energy Beam (Preserved in code, hidden from 3D scene) */}
+        {/* <MicrogridEnergyFlow houses={houses} activeTrade={activeTrade} cutLines={cutLines} /> */}
 
         {/* 7. Full 360-Degree OrbitControls with strict world boundary constraints */}
         <OrbitControls 
@@ -1180,162 +1666,430 @@ export default function NeighborhoodMicrogrid3D() {
           dampingFactor={0.08}
           rotateSpeed={0.8}
           zoomSpeed={0.85}
-          minDistance={7}
-          maxDistance={27}
+          minDistance={6}
+          maxDistance={38}
           minPolarAngle={Math.PI / 8}
           maxPolarAngle={Math.PI / 2.18}
         />
       </Canvas>
 
       {/* ================= TOP COMMUNITY TELEMETRY HUD BAR ================= */}
-      <div className="absolute top-5 left-4 right-4 sm:left-6 sm:right-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pointer-events-none z-20">
-        <div className="pointer-events-auto bg-white/85 backdrop-blur-xl border border-[#CBD5E1] p-3 sm:px-5 sm:py-2.5 rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.06)] flex flex-wrap items-center gap-3 sm:gap-6">
+      <div className="absolute top-5 left-4 right-4 sm:left-6 sm:right-6 flex items-center justify-between pointer-events-none z-20">
+        {/* Quick Metrics (Cleaned: Generation, Load, Net Balance, Self-Sufficiency - Request 3) */}
+        <div className="pointer-events-auto bg-white/90 backdrop-blur-xl border border-[#CBD5E1] px-4 py-2 rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.06)] flex items-center gap-5 text-xs font-mono">
           <div>
-            <div className="text-[10px] font-mono tracking-wider text-[#64748B] uppercase">
-              Community Microgrid Topology
-            </div>
-            <div className="text-xs font-semibold text-[#1E293B] flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#16A34A] animate-pulse" />
-              <span>12 Residential Nodes • Bounded Microgrid (1 Unit = 1 kWh)</span>
-            </div>
+            <span className="text-[10px] text-[#64748B] block">Generation</span>
+            <span className="font-semibold text-[#16A34A] tabular-nums">{totalGen} kWh</span>
           </div>
-
-          <div className="h-6 w-px bg-[#CBD5E1] hidden sm:block" />
-
-          {/* Quick Metrics */}
-          <div className="flex items-center gap-5 text-xs font-mono">
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Generation</span>
-              <span className="font-semibold text-[#D97706] tabular-nums">20.8 units</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Load</span>
-              <span className="font-semibold text-[#1E293B] tabular-nums">14.3 units</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-[#64748B] block">Net Surplus</span>
-              <span className="font-semibold text-[#16A34A] tabular-nums">+6.5 units</span>
-            </div>
-            <div className="hidden lg:block">
-              <span className="text-[10px] text-[#64748B] block">Self-Sufficiency</span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20">
-                99.1%
-              </span>
-            </div>
+          <div>
+            <span className="text-[10px] text-[#64748B] block">Load</span>
+            <span className="font-semibold text-[#1E293B] tabular-nums">{totalLoad} kWh</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-[#64748B] block">Net Balance</span>
+            <span className={`font-semibold tabular-nums ${netSurplus >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
+              {netSurplus >= 0 ? `+${netSurplus}` : netSurplus} kWh
+            </span>
+          </div>
+          <div className="hidden sm:block">
+            <span className="text-[10px] text-[#64748B] block">Self-Sufficiency</span>
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20">
+              {selfSufficiency}%
+            </span>
           </div>
         </div>
 
-        {selectedHouse && (
-          <button
-            onClick={() => {
-              setSelectedHouse(null);
-              setActiveTrade(null);
-              setTradeSuccess(false);
-            }}
-            className="pointer-events-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
-            <span>Reset View</span>
-          </button>
-        )}
+        {/* Action Controls (Cleaned: Settings moved to Header Navbar - Request 4) */}
+        <div className="pointer-events-auto flex items-center gap-2">
+          {selectedHouseIds.length > 0 && (
+            <button
+              onClick={() => {
+                setSelectedHouseIds([]);
+                setActiveTrade(null);
+                setTradeSuccess(false);
+              }}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 hover:bg-white text-[#1E293B] border border-[#CBD5E1] text-xs font-mono transition-all cursor-pointer shadow-sm hover:shadow active:scale-98"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#0284C7]" />
+              <span>Reset View ({selectedHouseIds.length})</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD ================= */}
+      {/* ================= ENHANCED NODE INFORMATION POPUP / CARD (F2 & F4) ================= */}
       {selectedHouse && (
-        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-80 sm:w-88 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
+        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-92 bg-white/92 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.08)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
           
-          {/* Header */}
-          <div className="flex items-start justify-between border-b border-[#E2E8F0] pb-3 mb-3.5">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-bold text-[#1E293B] px-2 py-0.5 rounded bg-[#F1F5F9] border border-[#CBD5E1]">
-                  {selectedHouse.id}
+          {/* Header Row: Heading on Left, Status Tag Right-Aligned (no dot), plus Close Button */}
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="text-base font-semibold text-[#1E293B]">
+              {selectedHouse.name}
+            </h3>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                selectedHouse.powerState === "blackout" || selectedHouse.isOutage || (selectedHouse.type === "consumer" && selectedHouse.powerState !== "grid")
+                  ? "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                  : selectedHouse.powerState === "line_cut"
+                  ? "bg-[#D97706]/10 text-[#D97706] border-[#D97706]/20"
+                  : selectedHouse.powerState === "battery"
+                  ? "bg-[#D99A22]/10 text-[#D99A22] border-[#D99A22]/20"
+                  : "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+              }`}>
+                {selectedHouse.powerState === "blackout" || selectedHouse.isOutage || (selectedHouse.type === "consumer" && selectedHouse.powerState !== "grid")
+                  ? "Blackout"
+                  : selectedHouse.powerState === "line_cut"
+                  ? "Line Cut"
+                  : selectedHouse.powerState === "battery"
+                  ? "On Battery"
+                  : "Grid Connected"}
+              </span>
+              <button
+                onClick={() => setSelectedHouseIds([])}
+                className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+                title="Close panel"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Consumer Divider vs Prosumer Battery Storage Bar */}
+          {selectedHouse.type === "consumer" ? (
+            <hr className="border-t border-[#E2E8F0] my-3.5" />
+          ) : (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5 font-mono text-xs">
+              <div className="flex justify-between items-center text-[#64748B]">
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <BatteryCharging className="w-3.5 h-3.5 text-[#D99A22]" />
+                  <span>Battery Storage</span>
                 </span>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
-                  selectedHouse.type === "prosumer" 
-                    ? "bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20"
-                    : "bg-[#0284C7]/10 text-[#0284C7] border border-[#0284C7]/20"
-                }`}>
-                  {selectedHouse.type}
+                <span className="font-semibold text-[#1D1D1F] tabular-nums">
+                  {selectedHouse.batteryKwh.toFixed(1)} / {selectedHouse.batteryCapacityKwh.toFixed(1)} kWh ({Math.round((selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) * 100)}%)
                 </span>
               </div>
-              <h3 className="text-base font-semibold text-[#1E293B] mt-1.5">
-                {selectedHouse.name}
-              </h3>
-            </div>
-            <button
-              onClick={() => setSelectedHouse(null)}
-              className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition"
-              title="Close panel"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Three Key Energy Metrics in Units (1 UNIT = 1 kWh) */}
-          <div className="space-y-2 text-xs font-mono mb-4 bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0]">
-            <div className="flex justify-between items-center">
-              <span className="text-[#64748B]">Generated Energy</span>
-              <span className="text-[#D97706] font-semibold tabular-nums">{selectedHouse.solarKwh.toFixed(1)} units</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[#64748B]">Consumed Energy</span>
-              <span className="text-[#1E293B] font-semibold tabular-nums">{selectedHouse.usageKwh.toFixed(1)} units</span>
-            </div>
-            <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-2 font-bold">
-              <span className="text-[#1E293B]">Net Surplus</span>
-              <span className={`tabular-nums ${selectedHouse.surplusKwh >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
-                {selectedHouse.surplusKwh >= 0 ? `+${selectedHouse.surplusKwh.toFixed(1)}` : selectedHouse.surplusKwh.toFixed(1)} units
-              </span>
-            </div>
-          </div>
-
-          {/* Outage status alert if any */}
-          {selectedHouse.isOutage && (
-            <div className="mb-3.5 p-2.5 rounded-xl bg-[#E11D48]/10 border border-[#E11D48]/20 text-xs text-[#E11D48] flex items-center gap-2 font-mono">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>Grid outage active (1.5 units deficit)</span>
+              <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) <= 0.2
+                      ? "bg-[#E11D48]"
+                      : (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) <= 0.5
+                      ? "bg-[#D99A22]"
+                      : "bg-[#16A34A]"
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(0, (selectedHouse.batteryKwh / (selectedHouse.batteryCapacityKwh || 6.0)) * 100))}%` }}
+                />
+              </div>
             </div>
           )}
 
-          {/* Wallet Address */}
-          <div className="text-[11px] font-mono text-[#64748B] mb-4 flex items-center justify-between">
-            <span>Node Address:</span>
-            <span className="text-[#1E293B] bg-white px-2 py-0.5 rounded border border-[#CBD5E1]">
-              {selectedHouse.walletAddress}
-            </span>
+          {/* Three Key Energy Metrics in Honest kWh (per 30-min tick) */}
+          <div className="space-y-2 text-xs font-mono mb-3.5 bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0]">
+            <div className="flex justify-between items-center">
+              <span className="text-[#64748B]">Generated Solar</span>
+              <span className="text-[#D97706] font-semibold tabular-nums">{selectedHouse.solarKwh.toFixed(2)} kWh</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[#64748B]">Consumed Load</span>
+              <span className="text-[#1E293B] font-semibold tabular-nums">{selectedHouse.usageKwh.toFixed(2)} kWh</span>
+            </div>
+            <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-2 font-bold">
+              <div className="flex items-center gap-1">
+                <span className="text-[#1E293B]">Net Balance</span>
+                <span className="text-[10px] text-[#94A3B8] font-normal" title="Energy per 30-minute simulation tick">(per 30m)</span>
+              </div>
+              <span className={`tabular-nums ${selectedHouse.surplusKwh >= 0 ? "text-[#16A34A]" : "text-[#E11D48]"}`}>
+                {selectedHouse.surplusKwh >= 0 ? `+${selectedHouse.surplusKwh.toFixed(2)} kWh surplus` : `${selectedHouse.surplusKwh.toFixed(2)} kWh deficit`}
+              </span>
+            </div>
+            {selectedHouse.predictedConsumptionKwh !== undefined && (
+              <div className="flex justify-between items-center border-t border-[#E2E8F0] pt-1.5 text-[10px] text-[#64748B]">
+                <span>Forecasted Need:</span>
+                <span className="font-semibold text-[#5277D5]">
+                  {selectedHouse.predictedConsumptionKwh.toFixed(2)} kWh
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Action Trigger */}
-          <button
-            onClick={handleInitiateTrade}
-            disabled={activeTrade !== null}
-            className="w-full py-2.5 rounded-xl bg-[#0F172A] hover:bg-[#1E293B] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm"
-          >
-            <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-            <span>{activeTrade ? "Dispatching Electricity..." : "Trade Surplus Energy →"}</span>
-          </button>
+          {/* Line Isolation Status & Line Cut Control (F4) */}
+          <div className="text-[11px] font-mono mb-3.5 flex items-center justify-between bg-[#F8FAFC] px-3 py-2.5 rounded-xl border border-[#E2E8F0]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[#64748B]">Line Connection:</span>
+              <span className={`font-semibold ${cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "text-[#D97706]" : "text-[#16A34A]"}`}>
+                {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? "Severed" : "Active (33kV)"}
+              </span>
+            </div>
+            {cutLines.includes(selectedHouse.householdId) || selectedHouse.powerState === "line_cut" ? (
+              <button
+                onClick={() => restoreLinesAction([selectedHouse.householdId])}
+                className="px-2.5 py-1 rounded-lg bg-[#16A34A]/10 hover:bg-[#16A34A]/20 text-[#16A34A] border border-[#16A34A]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
+                title="Reconnect utility line"
+              >
+                <span>Reconnect</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => cutLinesAction([selectedHouse.householdId])}
+                className="px-2.5 py-1 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer active:scale-95"
+                title="Simulate blown line / isolate house"
+              >
+                <span>Cut Line</span>
+              </button>
+            )}
+          </div>
+
+          {/* Incoming Candidate Prosumer Ping Alert (F7) */}
+          {incomingPing && (
+            <div className="mb-3.5 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 font-mono text-xs">
+              <div className="flex items-center gap-1.5 text-[#D97706] font-bold mb-1">
+                <Zap className="w-3.5 h-3.5 fill-[#D97706]" />
+                <span>Incoming Emergency Demand</span>
+              </div>
+              <div className="text-[11px] text-[#64748B] mb-2.5">
+                From <span className="font-bold text-[#1D1D1F]">{incomingPing.requester_code || `C-${incomingPing.requester_household_id}`}</span>: <span className="font-semibold text-[#1D1D1F]">{incomingPing.units_kwh} kWh</span> for <span className="font-semibold text-[#1D1D1F]">{incomingPing.total_price_eth} ETH</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => respondEnergyRequestAction(incomingPing.id, "accept", selectedHouse.householdId)}
+                  className="flex-1 py-1.5 rounded-lg bg-[#27845B] hover:bg-[#1E6948] text-white text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <Check className="w-3 h-3" />
+                  <span>Accept Ping</span>
+                </button>
+                <button
+                  onClick={() => respondEnergyRequestAction(incomingPing.id, "deny", selectedHouse.householdId)}
+                  className="flex-1 py-1.5 rounded-lg bg-[#DC2626]/10 hover:bg-[#DC2626]/20 text-[#DC2626] border border-[#DC2626]/30 text-[10px] font-bold transition cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Deny</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Context-Aware Action Triggers */}
+          {selectedHouse.type === "consumer" ? (
+            (selectedHouse.powerState === "blackout" || selectedHouse.isOutage || selectedHouse.powerState === "line_cut") ? (
+              <button
+                onClick={() => {
+                  setModalRequesterId(selectedHouse.householdId);
+                  setIsRequestModalOpen(true);
+                }}
+                className="w-full py-2.5 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] active:scale-[0.99] text-white font-medium text-xs font-mono transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                <span>Request Energy Backup</span>
+              </button>
+            ) : null
+          ) : selectedHouse.powerState === "battery" ? (
+            <div className="w-full py-2 px-3 rounded-xl bg-[#D99A22]/10 border border-[#D99A22]/20 text-[#D99A22] text-xs font-mono flex items-center justify-center gap-2">
+              <BatteryCharging className="w-4 h-4" />
+              <span>Running on Solar &amp; Battery Backup</span>
+            </div>
+          ) : (
+            <div className="w-full py-2 px-3 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-[#16A34A] text-xs font-mono flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Grid Synchronized • Ready to Supply</span>
+            </div>
+          )}
 
           {/* Trade status receipt */}
           {tradeSuccess && (
             <div className="mt-2.5 p-2 rounded-xl bg-[#16A34A]/10 border border-[#16A34A]/20 text-xs font-mono text-[#16A34A] flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>1.5 units dispatched via smart escrow</span>
+              <span>1.5 kWh dispatched via smart escrow</span>
             </div>
           )}
         </div>
       )}
 
-      {/* ================= BOTTOM INTERACTION HELPER ================= */}
-      <div className="absolute bottom-5 right-6 z-20 hidden md:flex items-center gap-3 px-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur-md border border-[#CBD5E1] text-[11px] font-mono text-[#64748B] shadow-sm pointer-events-none">
-        <span>Orbit: 360° Drag</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span>Zoom: Scroll (Bounded)</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span>Pan: Right-Click (Clamped)</span>
-        <span className="text-[#CBD5E1]">•</span>
-        <span className="text-[#0284C7] font-semibold">Click House to Inspect</span>
-      </div>
+      {/* ================= BATCH MULTI-SELECT LINE CONTROL DOCK (M3) ================= */}
+      {selectedHouses.length > 1 && (
+        <div className="absolute bottom-6 left-4 sm:left-6 z-20 w-84 sm:w-96 bg-white/95 border border-[#CBD5E1] rounded-2xl p-5 shadow-[0_16px_36px_rgba(0,0,0,0.12)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-300 font-sans">
+          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#5277D5] animate-pulse" />
+              <span className="text-xs font-mono font-bold text-[#1E293B]">
+                {selectedHouses.length} Nodes Selected
+              </span>
+              <span className="text-[10px] font-mono text-[#64748B]">
+                ({selectedHouses.map((h) => h.id).join(", ")})
+              </span>
+            </div>
+            <button
+              onClick={() => setSelectedHouseIds([])}
+              className="text-[#64748B] hover:text-[#1E293B] p-1 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+              title="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <p className="text-xs text-[#64748B] mb-3.5 leading-relaxed font-sans">
+            Batch microgrid isolation: Cut power lines to simulate blown line dropouts, or reconnect them to the main 33kV distribution feeder.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2.5 font-mono">
+            <button
+              onClick={() => cutLinesAction(selectedHouses.map((h) => h.householdId))}
+              className="py-2.5 px-3 rounded-xl bg-[#DC2626]/10 hover:bg-[#DC2626]/20 border border-[#DC2626]/30 text-[#DC2626] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
+            >
+              <span>Cut Lines ({selectedHouses.length})</span>
+            </button>
+            <button
+              onClick={() => restoreLinesAction(selectedHouses.map((h) => h.householdId))}
+              className="py-2.5 px-3 rounded-xl bg-[#16A34A]/10 hover:bg-[#16A34A]/20 border border-[#16A34A]/30 text-[#16A34A] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-[0.98]"
+            >
+              <span>Restore Lines</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 3D VIEWPORT ENERGY REQUEST MODAL (M4) ================= */}
+      {isRequestModalOpen && modalRequesterId && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-[#CBD5E1] shadow-[0_24px_48px_rgba(0,0,0,0.25)] max-w-sm w-full p-6 relative font-sans">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-[#1D1D1F]">
+                Request Energy Backup
+              </h3>
+              <button
+                onClick={() => setIsRequestModalOpen(false)}
+                className="text-[#64748B] hover:text-[#1E293B] p-1.5 rounded-lg hover:bg-[#F1F5F9] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleModalSubmit} className="space-y-3.5">
+              {/* Requester House Display */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-xs font-mono">
+                <span className="text-[#64748B]">Requester Node:</span>
+                <span className="font-bold text-[#1D1D1F]">
+                  Residence {HOUSES_CONFIG.find((h) => h.householdId === modalRequesterId)?.id} (Ausgrid #{modalRequesterId})
+                </span>
+              </div>
+
+              {/* Duration Horizon */}
+              <div>
+                <label className="block text-[11px] font-mono text-[#64748B] mb-1">
+                  Outage Horizon
+                </label>
+                <div className="grid grid-cols-3 gap-2 font-mono text-xs">
+                  {[2.0, 4.0, 8.0].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setModalDurationHours(h)}
+                      className={`py-1.5 rounded-xl border font-semibold transition cursor-pointer ${
+                        modalDurationHours === h
+                          ? "bg-[#1D1D1F] text-white border-[#1D1D1F]"
+                          : "bg-[#F8FAFC] text-[#64748B] border-[#D8D8DE] hover:bg-white"
+                      }`}
+                    >
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Energy Amount */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[11px] font-mono text-[#64748B]">
+                    Energy Required
+                  </label>
+                  {isEstimatingModal && (
+                    <span className="text-[10px] font-mono text-[#3A7D5C] animate-pulse">
+                      Estimating...
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.1"
+                    max="50.0"
+                    value={modalKwh}
+                    onChange={(e) => setModalKwh(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-[#D8D8DE] bg-white text-xs font-mono text-[#1D1D1F] focus:outline-none focus:ring-2 focus:ring-[#3A7D5C]/30 focus:border-[#3A7D5C]"
+                  />
+                  <span className="absolute right-3 top-2 text-xs font-mono text-[#94A3B8]">
+                    kWh
+                  </span>
+                </div>
+              </div>
+
+              {/* Settlement Fee */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-[11px] font-mono">
+                <span className="text-[#64748B]">Fixed Settlement:</span>
+                <span className="font-semibold text-[#1D1D1F]">0.000100 SepoliaETH</span>
+              </div>
+
+              {/* Auto-Accept Toggle Switch */}
+              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-[11px] font-mono">
+                <div>
+                  <span className="text-[#1D1D1F] font-semibold block">Prosumer Auto-Accept</span>
+                  <span className="text-[10px] text-[#64748B]">Auto-accept ping after 2s network delay</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleAutoAcceptAction()}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer border ${
+                    autoAcceptEnabled
+                      ? "bg-[#27845B]/10 text-[#27845B] border-[#27845B]/30 hover:bg-[#27845B]/20"
+                      : "bg-white text-[#64748B] border-[#CBD5E1] hover:text-[#1E293B]"
+                  }`}
+                >
+                  {autoAcceptEnabled ? "ACTIVE (ON)" : "MANUAL (OFF)"}
+                </button>
+              </div>
+
+              {modalError && (
+                <div className="p-2 rounded-xl bg-[#DC2626]/10 border border-[#DC2626]/20 text-[#DC2626] text-xs font-mono">
+                  {modalError}
+                </div>
+              )}
+
+              {modalSuccessMsg && (
+                <div className="p-2 rounded-xl bg-[#3A7D5C]/10 border border-[#3A7D5C]/20 text-[#27845B] text-xs font-mono flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{modalSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
+              <div className="flex items-center gap-2 pt-1 font-mono text-xs">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl border border-[#D8D8DE] text-[#64748B] hover:text-[#1D1D1F] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingModal}
+                  className="flex-1 py-2 rounded-xl bg-[#1D1D1F] hover:bg-[#343438] text-white font-medium transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSubmittingModal ? (
+                    <span>Pinging...</span>
+                  ) : (
+                    <>
+                      <Zap className="w-3.5 h-3.5 text-[#3A7D5C]" />
+                      <span>Ping Prosumer</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

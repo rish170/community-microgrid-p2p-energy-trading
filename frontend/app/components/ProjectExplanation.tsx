@@ -17,33 +17,33 @@ export default function ProjectExplanation() {
   const features = [
     {
       icon: <SunMedium className="w-5 h-5 text-[#FBBF24]" />,
-      title: "Solar Prosumer Generation",
-      description: "Households equipped with rooftop solar PV arrays generate green energy, powering local appliances while detecting real-time excess capacity for grid export."
+      title: "Ausgrid Solar Prosumer Fleet",
+      description: "6 solar prosumers with 6.0 kWh battery storage units generate clean solar energy, supplying local residential demand and exporting surplus during outages."
     },
     {
       icon: <ArrowLeftRight className="w-5 h-5 text-[#34D399]" />,
-      title: "Direct Peer-to-Peer Trading",
-      description: "Eliminates centralized utility middlemen. Consumers facing grid outages or high demand can buy energy directly from nearby neighbors at competitive local rates."
+      title: "3D Euclidean Matching Engine",
+      description: "Emergency demand requests are matched to the closest eligible solar prosumer based on 3D microgrid coordinates, minimizing conduit line losses under IEEE 2030.7 standards."
     },
     {
       icon: <Cpu className="w-5 h-5 text-[#38BDF8]" />,
-      title: "ERC-20 Tokenized Energy (ENG)",
-      description: "Every unit of energy (1 unit = 1 kWh) generated is represented on Ethereum/Sepolia by 1 EnergyToken (ENG), enabling verifiable, cryptographic unit-level accounting."
+      title: "Direct Sepolia ETH Settlement",
+      description: "Option B direct test ETH micro-settlement (0.000100 SepoliaETH) on Ethereum Sepolia via Trading.sol, eliminating synthetic token frictions and escrow deadlocks."
     },
     {
       icon: <ShieldCheck className="w-5 h-5 text-[#38BDF8]" />,
-      title: "Autonomous Escrow & Settlement",
-      description: "The Trading.sol smart contract locks payment in escrow, validates available prosumer token balance, and atomically settles upon physical meter confirmation."
+      title: "Islanding & Line Isolation Controls",
+      description: "Simulate society-wide utility 33kV substation blackouts or isolate individual houses with select-and-cut feeder line controls to demonstrate autonomous microgrid resilience."
     },
     {
       icon: <Database className="w-5 h-5 text-[#A78BFA]" />,
-      title: "Supabase Realtime Mirroring",
-      description: "On-chain trade logs and household microgrid telemetry are mirrored to Supabase in real-time, feeding live analytics, Power BI dashboards, and ML forecasts."
+      title: "Supabase Realtime Decoupled State",
+      description: "Decoupled PostgreSQL database mirroring smart meter telemetry, grid events, and on-chain trades over WebSocket channels with zero frontend service key exposure."
     },
     {
       icon: <Activity className="w-5 h-5 text-[#FB7185]" />,
-      title: "Automated Load Balancing",
-      description: "Dynamic pricing algorithms adjust rates per node distance and load deficit, incentivizing local resilience during peak stress or storm outages."
+      title: "XGBoost 24-Hour ML Forecasting",
+      description: "Machine learning models predict half-hourly demand and solar generation curves from historical Ausgrid data, accurately sizing emergency backup allocations."
     }
   ];
 
