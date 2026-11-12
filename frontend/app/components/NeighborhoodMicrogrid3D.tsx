@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
-import { playShiftHaptic } from "../utils/gamepadVibration";
+import { playFocusShiftSound, initSoundEffects } from "../utils/soundEffects";
 
 // Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
 if (typeof window !== "undefined") {
@@ -1641,13 +1641,18 @@ function GamepadSpatialNavigator({
   const lastShiftTimeRef = useRef(0);
 
   // Authoritative focus ID ref to eliminate any asynchronous React state race-conditions or backward flashing
-  const focusedIdRef = useRef<string | null>(controllerFocusedId || "C1");
+  const focusedIdRef = useRef<string | null>(controllerFocusedId);
   const selectedHouseRef = useRef<HouseLiveState | null>(selectedHouse);
   selectedHouseRef.current = selectedHouse;
+
+  useEffect(() => {
+    initSoundEffects();
+  }, []);
 
   // Listen to Gamepad connection events
   useEffect(() => {
     const handleConnected = (e: GamepadEvent) => {
+      initSoundEffects();
       hasControllerRef.current = true;
       onControllerStateChange((prev) => ({
         ...prev,
@@ -1771,19 +1776,31 @@ function GamepadSpatialNavigator({
     prevButtonStates.current = currentStates;
 
     if (triggeredDir) {
-      const current = focusedIdRef.current || "C1";
-      const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
-
-      if (nextId && nextId !== current) {
-        focusedIdRef.current = nextId;
-        const coords = HOUSE_COORDS[nextId];
-        // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
+      if (!focusedIdRef.current) {
+        // Any initial D-pad press places focus ring on C1 (Stage 1 rule) and plays sound
+        focusedIdRef.current = "C1";
+        const coords = HOUSE_COORDS["C1"];
         if (coords && focusRingRef.current) {
           focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
           focusRingRef.current.visible = true;
         }
-        onFocusChange(nextId);
-        playShiftHaptic();
+        onFocusChange("C1");
+        playFocusShiftSound();
+      } else {
+        const current = focusedIdRef.current;
+        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
+
+        if (nextId && nextId !== current) {
+          focusedIdRef.current = nextId;
+          const coords = HOUSE_COORDS[nextId];
+          // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
+          if (coords && focusRingRef.current) {
+            focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+            focusRingRef.current.visible = true;
+          }
+          onFocusChange(nextId);
+          playFocusShiftSound();
+        }
       }
 
       if (prevDirectionRef.current !== triggeredDir) {
