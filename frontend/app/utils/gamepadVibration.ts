@@ -43,12 +43,17 @@ export function getActiveGamepad(): Gamepad | null {
   return null;
 }
 
+let isRumblingActive = false;
+
 export async function triggerRumble(
   durationMs: number,
   strong?: number,
   weak?: number,
   startDelay: number = 0
 ): Promise<boolean> {
+  // Prevent flooding the Bluetooth queue: drop overlapping rumble requests
+  if (isRumblingActive) return false;
+
   const gp = getActiveGamepad();
   if (!gp) return false;
 
@@ -60,6 +65,7 @@ export async function triggerRumble(
   if (!actuator || typeof actuator.playEffect !== "function") return false;
 
   try {
+    isRumblingActive = true;
     await actuator.playEffect("dual-rumble", {
       startDelay,
       duration: Math.max(10, Math.min(10000, durationMs)),
@@ -70,6 +76,8 @@ export async function triggerRumble(
   } catch (err) {
     console.warn("[Gamepad] Vibration playEffect warning:", err);
     return false;
+  } finally {
+    isRumblingActive = false;
   }
 }
 
@@ -132,10 +140,8 @@ export async function playVibrationPattern(patternId: string, strong?: number, w
   }
 }
 
-// Satisfying haptic feedback when shifting focus on house
+// Action haptic feedback (disabled during rapid D-pad navigation to maintain 0ms Bluetooth input latency)
 export function playShiftHaptic() {
-  const settings = loadVibrationSettings();
-  // Quick, punchy, tactile click
-  triggerRumble(70, settings.strongMagnitude * 0.7, settings.weakMagnitude);
+  // Kept lightweight or no-op so Bluetooth HID report queue never stalls
 }
 

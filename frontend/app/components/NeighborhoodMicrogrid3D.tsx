@@ -1363,6 +1363,23 @@ function CameraController({
   return null;
 }
 
+// Fixed parcel coordinates for each of the 12 houses
+const HOUSE_COORDS: Record<string, [number, number, number]> = {
+  C1: [-12.5, 0, -4.5],
+  P1: [-7.5, 0, -4.5],
+  C2: [-2.5, 0, -4.5],
+  P2: [2.5, 0, -4.5],
+  C3: [7.5, 0, -4.5],
+  P3: [12.5, 0, -4.5],
+
+  P4: [-12.5, 0, 4.5],
+  C4: [-7.5, 0, 4.5],
+  P5: [-2.5, 0, 4.5],
+  C5: [2.5, 0, 4.5],
+  P6: [7.5, 0, 4.5],
+  C6: [12.5, 0, 4.5],
+};
+
 // Grid layout mappings for the two parallel rows:
 // North row (z = -4.5): C1, P1, C2, P2, C3, P3 (columns 0 to 5)
 // South row (z = +4.5): P4, C4, P5, C5, P6, C6 (columns 0 to 5)
@@ -1385,87 +1402,137 @@ const HOUSE_GRID_MAP: Record<string, { row: "NORTH" | "SOUTH"; col: number }> = 
   C6: { row: "SOUTH", col: 5 },
 };
 
+// Pre-allocated projection scratch vectors to eliminate GC latency
+const _projWest = new THREE.Vector3();
+const _projEast = new THREE.Vector3();
+const _projNorth = new THREE.Vector3();
+const _projSouth = new THREE.Vector3();
+
 /**
  * Computes the neighbor house in the given D-pad direction.
- * - In horizontal street orientation (Image 1, 3, 4, 5, top-down):
- *   LEFT / RIGHT moves along the SAME ROW.
+ * - Horizontal street orientation:
+ *   LEFT / RIGHT moves along the SAME ROW with cyclic wrapping (never gets stuck at dead ends).
  *   UP / DOWN moves ACROSS THE STREET to the paired opposite house.
- * - In vertical street orientation (Image 2: looking down street length):
- *   UP / DOWN moves along the SAME ROW.
+ * - Vertical street orientation:
+ *   UP / DOWN moves along the SAME ROW with cyclic wrapping.
  *   LEFT / RIGHT moves ACROSS THE STREET to the paired opposite house.
  */
 function computeCameraRelativeNeighbor(
   currentId: string,
   dirName: "UP" | "DOWN" | "LEFT" | "RIGHT",
   camera: THREE.Camera
-): string | null {
+): string {
   camera.updateMatrixWorld();
-  if ("updateProjectionMatrix" in camera && typeof (camera as THREE.PerspectiveCamera).updateProjectionMatrix === "function") {
-    (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
-  }
 
   const cur = HOUSE_GRID_MAP[currentId];
   if (!cur) return "C1";
 
   // Project street axis (from West col 0 at x=-12.5 to East col 5 at x=12.5)
-  const pWest = new THREE.Vector3(-12.5, 0, 0).project(camera);
-  const pEast = new THREE.Vector3(12.5, 0, 0).project(camera);
-  const streetScreen = new THREE.Vector2(pEast.x - pWest.x, pEast.y - pWest.y);
+  _projWest.set(-12.5, 0, 0).project(camera);
+  _projEast.set(12.5, 0, 0).project(camera);
+  const streetScreenX = _projEast.x - _projWest.x;
+  const streetScreenY = _projEast.y - _projWest.y;
 
   // Project across-street axis at current column X (from North z=-4.5 to South z=4.5)
   const colX = -12.5 + cur.col * 5.0;
-  const pNorth = new THREE.Vector3(colX, 0, -4.5).project(camera);
-  const pSouth = new THREE.Vector3(colX, 0, 4.5).project(camera);
-  const crossScreen = new THREE.Vector2(pSouth.x - pNorth.x, pSouth.y - pNorth.y);
+  _projNorth.set(colX, 0, -4.5).project(camera);
+  _projSouth.set(colX, 0, 4.5).project(camera);
+  const crossScreenX = _projSouth.x - _projNorth.x;
+  const crossScreenY = _projSouth.y - _projNorth.y;
 
   // Determine whether street spans primarily horizontal or vertical on screen
-  const isStreetHorizontal = Math.abs(streetScreen.x) >= Math.abs(streetScreen.y);
+  const isStreetHorizontal = Math.abs(streetScreenX) >= Math.abs(streetScreenY);
 
   if (isStreetHorizontal) {
-    // -------------------------------------------------------------
-    // Horizontal Street (Default, 180°, diagonal angles like img 4/5)
-    // 1. LEFT / RIGHT moves strictly within the SAME ROW
-    // 2. UP / DOWN moves ACROSS THE STREET to the paired opposite house
-    // -------------------------------------------------------------
     if (dirName === "LEFT" || dirName === "RIGHT") {
-      // If streetScreen.x >= 0, increasing column moves screen-RIGHT.
-      // If streetScreen.x < 0, increasing column moves screen-LEFT.
-      const colStep = (dirName === "RIGHT" ? 1 : -1) * (streetScreen.x >= 0 ? 1 : -1);
-      const nextCol = Math.max(0, Math.min(5, cur.col + colStep));
+      // Move within the same row along the street with cyclic wrap-around (no dead ends)
+      const colStep = (dirName === "RIGHT" ? 1 : -1) * (streetScreenX >= 0 ? 1 : -1);
+      const nextCol = (cur.col + colStep + 6) % 6;
       const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
       return rowList[nextCol];
     } else {
-      // UP / DOWN moves across the street
-      // If crossScreen.y > 0: South row is higher/further UP on screen
-      // If crossScreen.y < 0: North row is higher/further UP on screen
-      const wantSouth = dirName === "UP" ? (crossScreen.y > 0) : (crossScreen.y < 0);
-      const targetRow = wantSouth ? "SOUTH" : "NORTH";
+      // UP / DOWN moves across the street to the opposite row
+      const wantSouth = dirName === "UP" ? (crossScreenY > 0) : (crossScreenY < 0);
+      let targetRow: "NORTH" | "SOUTH" = wantSouth ? "SOUTH" : "NORTH";
+      // If already on the target row, cross to opposite row so every press navigates
+      if (targetRow === cur.row) {
+        targetRow = cur.row === "NORTH" ? "SOUTH" : "NORTH";
+      }
       const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
       return targetRowList[cur.col];
     }
   } else {
-    // -------------------------------------------------------------
-    // Vertical Street (Looking down street lengthwise, like img 2)
-    // 1. UP / DOWN moves strictly within the SAME ROW
-    // 2. LEFT / RIGHT moves ACROSS THE STREET to the paired opposite house
-    // -------------------------------------------------------------
+    // Vertical Street (Looking down street lengthwise)
     if (dirName === "UP" || dirName === "DOWN") {
-      // If streetScreen.y >= 0, increasing column moves screen-UP.
-      // If streetScreen.y < 0, increasing column moves screen-DOWN.
-      const colStep = (dirName === "UP" ? 1 : -1) * (streetScreen.y >= 0 ? 1 : -1);
-      const nextCol = Math.max(0, Math.min(5, cur.col + colStep));
+      const colStep = (dirName === "UP" ? 1 : -1) * (streetScreenY >= 0 ? 1 : -1);
+      const nextCol = (cur.col + colStep + 6) % 6;
       const rowList = cur.row === "NORTH" ? ROW_NORTH : ROW_SOUTH;
       return rowList[nextCol];
     } else {
-      // LEFT / RIGHT moves across the street
-      // If crossScreen.x > 0: South row is to the RIGHT on screen
-      // If crossScreen.x < 0: North row is to the RIGHT on screen
-      const wantSouth = dirName === "RIGHT" ? (crossScreen.x > 0) : (crossScreen.x < 0);
-      const targetRow = wantSouth ? "SOUTH" : "NORTH";
+      // LEFT / RIGHT moves across the street to the opposite row
+      const wantSouth = dirName === "RIGHT" ? (crossScreenX > 0) : (crossScreenX < 0);
+      let targetRow: "NORTH" | "SOUTH" = wantSouth ? "SOUTH" : "NORTH";
+      if (targetRow === cur.row) {
+        targetRow = cur.row === "NORTH" ? "SOUTH" : "NORTH";
+      }
       const targetRowList = targetRow === "NORTH" ? ROW_NORTH : ROW_SOUTH;
       return targetRowList[cur.col];
     }
   }
+}
+
+// Dedicated 3D Controller Focus Ring with 0ms direct-ref position updates
+function ControllerFocusRing({
+  ringRef,
+  focusedId,
+  selectedId,
+}: {
+  ringRef: React.RefObject<THREE.Group | null>;
+  focusedId: string | null;
+  selectedId: string | null;
+}) {
+  const outerMeshRef = useRef<THREE.Mesh | null>(null);
+
+  useFrame((state) => {
+    if (outerMeshRef.current) {
+      const t = state.clock.getElapsedTime();
+      const s = 1.0 + 0.04 * Math.sin(t * 8);
+      outerMeshRef.current.scale.set(s, s, 1);
+    }
+  });
+
+  const targetCoords = focusedId ? HOUSE_COORDS[focusedId] : null;
+  const isVisible = Boolean(targetCoords && focusedId !== selectedId);
+  const isProsumer = focusedId ? focusedId.startsWith("P") : false;
+
+  return (
+    <group
+      ref={ringRef}
+      position={targetCoords ? [targetCoords[0], 0.06, targetCoords[2]] : [0, -100, 0]}
+      visible={isVisible}
+    >
+      {/* Outer Pulse Ring */}
+      <mesh ref={outerMeshRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.75, 2.18, 36]} />
+        <meshBasicMaterial
+          color={isProsumer ? "#F59E0B" : "#EF4444"}
+          transparent
+          opacity={0.88}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {/* Inner Crisp White Accent Ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+        <ringGeometry args={[1.58, 1.72, 36]} />
+        <meshBasicMaterial
+          color="#FFFFFF"
+          transparent
+          opacity={0.7}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
+  );
 }
 
 interface GamepadSpatialNavigatorProps {
@@ -1474,6 +1541,7 @@ interface GamepadSpatialNavigatorProps {
   selectedHouse: HouseLiveState | null;
   cutLines: number[];
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  focusRingRef: React.RefObject<THREE.Group | null>;
   onFocusChange: (houseId: string) => void;
   onSelectHouse: (houseId: string) => void;
   onResetView: () => void;
@@ -1488,6 +1556,7 @@ function GamepadSpatialNavigator({
   selectedHouse,
   cutLines,
   controlsRef,
+  focusRingRef,
   onFocusChange,
   onSelectHouse,
   onResetView,
@@ -1559,7 +1628,7 @@ function GamepadSpatialNavigator({
     let gp: Gamepad | null = null;
     for (let i = 0; i < gamepads.length; i++) {
       const g = gamepads[i];
-      if (g && g.connected) {
+      if (g && g.connected && (g.buttons.length >= 12 || g.axes.length >= 4)) {
         gp = g;
         break;
       }
@@ -1590,10 +1659,10 @@ function GamepadSpatialNavigator({
     // 1. STRICT D-PAD FOCUS NAVIGATION (Instant response, zero lag, no sticks/arrows)
     // =========================================================================
     // DualShock 4 D-pad mapping: buttons[12]=Up, [13]=Down, [14]=Left, [15]=Right
-    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.5);
-    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.5);
-    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.5);
-    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.5);
+    const btnUp = Boolean(gp.buttons[12]?.pressed || (gp.buttons[12]?.value ?? 0) > 0.3);
+    const btnDown = Boolean(gp.buttons[13]?.pressed || (gp.buttons[13]?.value ?? 0) > 0.3);
+    const btnLeft = Boolean(gp.buttons[14]?.pressed || (gp.buttons[14]?.value ?? 0) > 0.3);
+    const btnRight = Boolean(gp.buttons[15]?.pressed || (gp.buttons[15]?.value ?? 0) > 0.3);
 
     // Optional POV Hat switch on axes[9] fallback if driver uses hat switch for D-pad
     let hatUp = false, hatDown = false, hatLeft = false, hatRight = false;
@@ -1636,10 +1705,10 @@ function GamepadSpatialNavigator({
         break;
       } else if (isPressed && wasPressed) {
         const holdDuration = now - buttonHoldTimes.current[d];
-        // Snappy initial repeat threshold (240ms), followed by rapid 80ms repeat
-        if (holdDuration > 240) {
+        // Snappy initial repeat threshold (200ms), followed by rapid 70ms repeat
+        if (holdDuration > 200) {
           triggeredDir = d;
-          buttonHoldTimes.current[d] = now - 160;
+          buttonHoldTimes.current[d] = now - 130;
           break;
         }
       } else if (!isPressed && wasPressed) {
@@ -1651,19 +1720,17 @@ function GamepadSpatialNavigator({
 
     if (triggeredDir) {
       const current = focusedIdRef.current;
-      if (!current) {
-        // Any button on d-pad pressed: focus ring appears on house C1 instantly
-        focusedIdRef.current = "C1";
-        onFocusChange("C1");
-        playShiftHaptic();
-      } else {
-        // Spatial navigation relative to viewer's current camera angle
-        const nextId = computeCameraRelativeNeighbor(current, triggeredDir, camera);
-        if (nextId && nextId !== current) {
-          focusedIdRef.current = nextId;
-          onFocusChange(nextId);
-          playShiftHaptic();
+      const nextId = current ? computeCameraRelativeNeighbor(current, triggeredDir, camera) : "C1";
+
+      if (nextId) {
+        focusedIdRef.current = nextId;
+        const coords = HOUSE_COORDS[nextId];
+        // Direct 0ms in-frame scene repositioning (bypasses React render pipeline delay)
+        if (coords && focusRingRef.current) {
+          focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+          focusRingRef.current.visible = true;
         }
+        onFocusChange(nextId);
       }
 
       if (prevDirectionRef.current !== triggeredDir) {
@@ -1694,11 +1761,15 @@ function GamepadSpatialNavigator({
     // - If no house is open: opens the currently focused house (or C1)
     // - If a house is open: toggles cut line (cuts if active, restores if cut)
     if (btnCross && !prevActionButtons.current.cross) {
-      playShiftHaptic();
       const currentSelected = selectedHouseRef.current;
       if (!currentSelected) {
         const targetId = focusedIdRef.current || "C1";
         focusedIdRef.current = targetId;
+        const coords = HOUSE_COORDS[targetId];
+        if (coords && focusRingRef.current) {
+          focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
+          focusRingRef.current.visible = true;
+        }
         onFocusChange(targetId);
         onSelectHouse(targetId);
       } else {
@@ -1708,7 +1779,6 @@ function GamepadSpatialNavigator({
 
     // 2B. Circle Button: Goes back to the complete simulation view (reset)
     if (btnCircle && !prevActionButtons.current.circle) {
-      playShiftHaptic();
       onResetView();
     }
 
@@ -1716,7 +1786,6 @@ function GamepadSpatialNavigator({
     if (btnTriangle && !prevActionButtons.current.triangle) {
       const currentSelected = selectedHouseRef.current;
       if (currentSelected) {
-        playShiftHaptic();
         onRequestBackup(currentSelected);
       }
     }
@@ -1847,6 +1916,7 @@ export default function NeighborhoodMicrogrid3D() {
   const [tradeSuccess, setTradeSuccess] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const focusRingRef = useRef<THREE.Group | null>(null);
 
   // Energy Request Modal state (M4)
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -2148,6 +2218,7 @@ export default function NeighborhoodMicrogrid3D() {
           selectedHouse={selectedHouse}
           cutLines={cutLines}
           controlsRef={controlsRef}
+          focusRingRef={focusRingRef}
           onFocusChange={(newId) => setControllerFocusedId(newId)}
           onSelectHouse={(houseId) => handleHouseSelect(houseId, false)}
           onResetView={() => {
@@ -2174,6 +2245,13 @@ export default function NeighborhoodMicrogrid3D() {
             }
           }}
           onControllerStateChange={setGamepadState}
+        />
+
+        {/* Dedicated 0ms instant 3D Controller Focus Ring */}
+        <ControllerFocusRing 
+          ringRef={focusRingRef} 
+          focusedId={controllerFocusedId} 
+          selectedId={selectedHouse?.id || null} 
         />
 
         {/* Realistic Sun & Ambient Lighting (Dims dynamically during society outage) */}
@@ -2220,13 +2298,15 @@ export default function NeighborhoodMicrogrid3D() {
               key={house.id}
               house={house}
               isSelected={selectedHouseIds.includes(house.id)}
-              isHovered={hoveredHouseId === house.id || controllerFocusedId === house.id}
+              isHovered={hoveredHouseId === house.id && !gamepadState.connected}
               isLineCut={cutLines.includes(house.householdId) || house.powerState === "line_cut"}
               showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
               onSelect={(isMulti) => handleHouseSelect(house.id, isMulti)}
               onHover={(hovered) => {
                 setHoveredHouseId(hovered ? house.id : null);
-                if (hovered) setControllerFocusedId(house.id);
+                if (hovered && !gamepadState.connected) {
+                  setControllerFocusedId(house.id);
+                }
               }}
             />
           ))}
