@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { HOUSES_CONFIG } from "../config/houses";
 import { useMicrogridData, HouseLiveState } from "../hooks/useMicrogridData";
-import { playFocusShiftSound, playSelectSound, initSoundEffects } from "../utils/soundEffects";
+import { playFocusShiftSound, playSelectSound, playBackSound, initSoundEffects } from "../utils/soundEffects";
 import { playShiftHaptic } from "../utils/gamepadVibration";
 
 // Suppress Three.js r183 upstream deprecation warnings for R3F 9.x internals
@@ -1267,8 +1267,25 @@ function ActiveTradeBeam({
 }
 
 // =========================================================================
-// CAMERA CONTROLLER WITH FRONT VIEW FOCUS & INTERACTION STABILITY (Requests 6 & 7)
+// FIXED PARCEL COORDINATES & CAMERA CONTROLLER WITH ZERO-LATENCY DIRECT FOCUS
 // =========================================================================
+
+// Fixed parcel coordinates for each of the 12 houses
+const HOUSE_COORDS: Record<string, [number, number, number]> = {
+  C1: [-12.5, 0, -4.5],
+  P1: [-7.5, 0, -4.5],
+  C2: [-2.5, 0, -4.5],
+  P2: [2.5, 0, -4.5],
+  C3: [7.5, 0, -4.5],
+  P3: [12.5, 0, -4.5],
+
+  P4: [-12.5, 0, 4.5],
+  C4: [-7.5, 0, 4.5],
+  P5: [-2.5, 0, 4.5],
+  C5: [2.5, 0, 4.5],
+  P6: [7.5, 0, 4.5],
+  C6: [12.5, 0, 4.5],
+};
 
 function CameraController({ 
   selectedHouse,
@@ -1285,13 +1302,17 @@ function CameraController({
   const transitionProgress = useRef(0);
   const startPos = useRef(new THREE.Vector3(0, 15, 23));
   const startTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+  const directTargetCoord = useRef<{ id: string; x: number; z: number } | null>(null);
 
-  // Stop camera transition immediately when the user rotates, drags, or zooms (Request 6)
+  // Stop camera transition immediately when the user rotates, drags, or zooms
   useEffect(() => {
     const controls = controlsRef.current;
     if (!controls) return;
     const handleInteractionStart = () => {
-      isTransitioning.current = false;
+      // Only abort transition if user actively intervened after camera transition has started moving
+      if (transitionProgress.current > 0.08) {
+        isTransitioning.current = false;
+      }
     };
     controls.addEventListener("start", handleInteractionStart);
     return () => {
@@ -1299,13 +1320,53 @@ function CameraController({
     };
   }, [controlsRef]);
 
+  // Synchronous direct events for 0ms camera transition start (bypasses React render batching delay)
   useEffect(() => {
-    // Only transition camera when user selects a different house or explicitly resets view
+    const handleDirectFocus = (e: Event) => {
+      const custom = e as CustomEvent<{ houseId: string }>;
+      const hid = custom.detail?.houseId;
+      if (!hid) return;
+      const coords = HOUSE_COORDS[hid];
+      if (!coords || !controlsRef.current) return;
+      isTransitioning.current = true;
+      transitionProgress.current = 0;
+      prevSelectedId.current = hid;
+      directTargetCoord.current = { id: hid, x: coords[0], z: coords[2] };
+      startPos.current.copy(controlsRef.current.object.position);
+      startTarget.current.copy(controlsRef.current.target);
+    };
+
+    const handleDirectReset = () => {
+      if (!controlsRef.current) return;
+      isTransitioning.current = true;
+      transitionProgress.current = 0;
+      prevSelectedId.current = null;
+      directTargetCoord.current = null;
+      startPos.current.copy(controlsRef.current.object.position);
+      startTarget.current.copy(controlsRef.current.target);
+    };
+
+    window.addEventListener("microgrid_camera_focus_house", handleDirectFocus);
+    window.addEventListener("microgrid_camera_reset_view", handleDirectReset);
+
+    return () => {
+      window.removeEventListener("microgrid_camera_focus_house", handleDirectFocus);
+      window.removeEventListener("microgrid_camera_reset_view", handleDirectReset);
+    };
+  }, [controlsRef]);
+
+  useEffect(() => {
+    // Also transition camera if selectedHouse changes via external React prop
     if (selectedHouse?.id !== prevSelectedId.current || resetViewTrigger !== prevResetTrigger.current) {
       isTransitioning.current = true;
       transitionProgress.current = 0;
       prevSelectedId.current = selectedHouse?.id || null;
       prevResetTrigger.current = resetViewTrigger;
+      if (selectedHouse) {
+        directTargetCoord.current = { id: selectedHouse.id, x: selectedHouse.x, z: selectedHouse.z };
+      } else {
+        directTargetCoord.current = null;
+      }
       if (controlsRef.current) {
         startPos.current.copy(controlsRef.current.object.position);
         startTarget.current.copy(controlsRef.current.target);
@@ -1322,26 +1383,28 @@ function CameraController({
     controlsRef.current.target.z = THREE.MathUtils.clamp(controlsRef.current.target.z, -8.0, 8.0);
 
     if (isTransitioning.current) {
-      // Smooth cubic ease out progression
-      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.2);
+      // Snappy cubic ease out progression
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 2.8);
       const t = 1 - Math.pow(1 - transitionProgress.current, 3);
 
-      if (selectedHouse) {
+      const targetCoord = directTargetCoord.current || (selectedHouse ? { id: selectedHouse.id, x: selectedHouse.x, z: selectedHouse.z } : null);
+
+      if (targetCoord) {
         // FRONT VIEW: Look at the house from the central road (street side facing the front porch) (Request 7)
-        // North row (z < 0): front porch faces +Z (road), camera placed at z = selectedHouse.z + 5.2
-        // South row (z > 0): front porch faces -Z (road), camera placed at z = selectedHouse.z - 5.2
-        const isSouthRow = selectedHouse.z > 0;
-        const cameraZ = isSouthRow ? selectedHouse.z - 5.2 : selectedHouse.z + 5.2;
-        const destPos = new THREE.Vector3(selectedHouse.x, 2.4, cameraZ);
-        const destLook = new THREE.Vector3(selectedHouse.x, 1.2, selectedHouse.z);
+        // North row (z < 0): front porch faces +Z (road), camera placed at z = targetCoord.z + 5.2
+        // South row (z > 0): front porch faces -Z (road), camera placed at z = targetCoord.z - 5.2
+        const isSouthRow = targetCoord.z > 0;
+        const cameraZ = isSouthRow ? targetCoord.z - 5.2 : targetCoord.z + 5.2;
+        const destPos = new THREE.Vector3(targetCoord.x, 2.4, cameraZ);
+        const destLook = new THREE.Vector3(targetCoord.x, 1.2, targetCoord.z);
 
         controlsRef.current.target.lerpVectors(startTarget.current, destLook, t);
 
         const currentPos = new THREE.Vector3().lerpVectors(startPos.current, destPos, t);
         // For South row houses: if moving from behind (+Z) to front (-Z), swing the camera around the side
         // in an arc so it NEVER passes through the roof zenith or triggers top view gimbal clamping
-        if (isSouthRow && startPos.current.z > selectedHouse.z) {
-          const arcSide = selectedHouse.x >= 0 ? -1 : 1;
+        if (isSouthRow && startPos.current.z > targetCoord.z) {
+          const arcSide = targetCoord.x >= 0 ? -1 : 1;
           const arc = Math.sin(t * Math.PI) * 4.5 * arcSide;
           currentPos.x += arc;
         }
@@ -1369,23 +1432,6 @@ function CameraController({
 
   return null;
 }
-
-// Fixed parcel coordinates for each of the 12 houses
-const HOUSE_COORDS: Record<string, [number, number, number]> = {
-  C1: [-12.5, 0, -4.5],
-  P1: [-7.5, 0, -4.5],
-  C2: [-2.5, 0, -4.5],
-  P2: [2.5, 0, -4.5],
-  C3: [7.5, 0, -4.5],
-  P3: [12.5, 0, -4.5],
-
-  P4: [-12.5, 0, 4.5],
-  C4: [-7.5, 0, 4.5],
-  P5: [-2.5, 0, 4.5],
-  C5: [2.5, 0, 4.5],
-  P6: [7.5, 0, 4.5],
-  C6: [12.5, 0, 4.5],
-};
 
 // Grid layout mappings for the two parallel rows:
 // North row (z = -4.5): C1, P1, C2, P2, C3, P3 (columns 0 to 5)
@@ -1856,9 +1902,11 @@ function GamepadSpatialNavigator({
           focusRingRef.current.position.set(coords[0], 0.06, coords[2]);
           focusRingRef.current.visible = true;
         }
+        // Direct synchronous event starts zoom-in on this exact frame (0ms delay, matches audio start)
+        window.dispatchEvent(new CustomEvent("microgrid_camera_focus_house", { detail: { houseId: targetId } }));
+        playSelectSound();
         onFocusChange(targetId);
         onSelectHouse(targetId);
-        playSelectSound();
       } else {
         onToggleCutLine(currentSelected);
       }
@@ -1866,6 +1914,11 @@ function GamepadSpatialNavigator({
 
     // 2B. Circle Button: Goes back to the complete simulation view (reset)
     if (btnCircle && !prevActionButtons.current.circle) {
+      const wasSelected = Boolean(selectedHouseRef.current);
+      if (wasSelected) {
+        playBackSound();
+      }
+      window.dispatchEvent(new CustomEvent("microgrid_camera_reset_view"));
       onResetView();
     }
 
@@ -2440,6 +2493,7 @@ export default function NeighborhoodMicrogrid3D() {
               showBadge={!isRequestModalOpen && (selectedHouseIds.length !== 1 || selectedHouseIds.includes(house.id))}
               onSelect={(isMulti) => {
                 setControllerFocusedId(house.id);
+                window.dispatchEvent(new CustomEvent("microgrid_camera_focus_house", { detail: { houseId: house.id } }));
                 handleHouseSelect(house.id, isMulti);
               }}
               onHover={(hovered) => {
