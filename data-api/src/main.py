@@ -293,6 +293,24 @@ def backup_estimate(hours: float = Query(4.0, gt=0, le=12)):
     return engine.estimate_backup(hours)
 
 
+@app.get("/")
+def root():
+    return {
+        "service": "Community Microgrid - Data API & Replay Engine",
+        "status": "online",
+        "docs_url": "/docs",
+        "health_url": "/health",
+        "replay": {
+            "status_url": "/replay/status",
+            "start_url": "/replay/start (POST)",
+            "stop_url": "/replay/stop (POST)",
+            "reset_url": "/replay/reset (POST)",
+            "running": _running,
+            "households_count": len(engine.household_ids) if engine else 0,
+        }
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
